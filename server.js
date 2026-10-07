@@ -1033,11 +1033,17 @@ function renderPage(res, name, { returnUrl = '' } = {}) {
   res.send(html);
 }
 
-// Sign in or sign up, then back to ?return= (a Canopy page) or the
-// profile. Already signed in: straight there.
+// Where someone lands here with nowhere else to go: the admin's is the
+// Account Manager, everyone else's their profile.
+function homeFor(req) {
+  return isAdmin(req) ? '/admin' : '/profile';
+}
+
+// Sign in or sign up, then back to ?return= (a Canopy page) or home.
+// Already signed in: straight there.
 app.get('/', attachSession(false), (req, res) => {
   const back = safeReturn(req.query.return);
-  if (req.person) return res.redirect(back || '/profile');
+  if (req.person) return res.redirect(back || homeFor(req));
   renderPage(res, 'welcome.html', { returnUrl: back || '' });
 });
 

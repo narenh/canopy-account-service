@@ -101,12 +101,14 @@ const COPY = {
     addPasskey: 'Add a passkey',
     added: 'Passkey added.',
     signOut: 'Sign out of all Canopy sites',
-    admin: 'Manage people'
+    // The admin's way back from their own profile.
+    admin: 'Back to manager'
   },
 
   // ---------------- The admin, at /admin ----------------
   admin: {
     heading: 'Account Manager',
+    myProfile: 'My Profile',
     peopleTab: 'People',
     sitesTab: 'Sites',
     settingsTab: 'Settings',
