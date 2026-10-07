@@ -17,8 +17,10 @@ function freePort() {
 }
 
 async function startServer(extraEnv = {}) {
-  const port = await freePort();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-account-test-'));
+  const port = extraEnv.PORT ? Number(extraEnv.PORT) : await freePort();
+  // A scratch folder unless one is given (and then it's left alone).
+  const ownDir = !extraEnv.DATA_DIR;
+  const dataDir = extraEnv.DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-account-test-'));
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ADMIN_PASSWORD: 'setup-pw', NODE_ENV: 'test', SMTP_HOST: '', ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -48,7 +50,7 @@ async function startServer(extraEnv = {}) {
     },
     stop() {
       child.kill();
-      fs.rmSync(dataDir, { recursive: true, force: true });
+      if (ownDir) fs.rmSync(dataDir, { recursive: true, force: true });
     }
   };
 }
