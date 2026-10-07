@@ -124,7 +124,9 @@ let email = '';
 let adminFlow = false;
 
 function enter(){
-  window.location.href = adminFlow ? '/admin' : (RETURN_URL || '/profile');
+  // Home is / once signed in: the server sends the admin to the Account
+  // Manager and everyone else to their profile.
+  window.location.href = adminFlow ? '/admin' : (RETURN_URL || '/');
 }
 
 const CARDS = ['adminSetupForm', 'emailForm', 'codeForm', 'profileForm', 'existingCard'];

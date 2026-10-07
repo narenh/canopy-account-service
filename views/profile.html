@@ -24,23 +24,23 @@
   .passkey .what span{color:var(--muted);display:block;font-size:12px;}
   .passkey button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .email-line{color:var(--muted);font-size:13px;text-align:center;margin:0 0 16px;}
-  /* The admin's link, over the page (white: it sits on the bright top of
-     the background). The logo is in the card, where the green of its arc
-     shows. */
-  .page-head{max-width:400px;margin:0 auto 12px;text-align:right;min-height:18px;}
-  .page-head a{color:var(--on-bg);font-size:13px;font-weight:600;text-decoration:underline;}
+  /* The admin's way back to the Account Manager, over the page. */
+  .page-head{max-width:400px;margin:0 auto 12px;min-height:18px;}
+  .email-line .link-btn{margin-left:6px;}
+  #emailSheet input.code{margin-bottom:12px;}
   .name-row .field{flex:1;min-width:0;}
 </style>
 </head>
 <body class="mesh-bg">
   <header class="page-head">
-    <a href="/admin" id="adminLink" class="hidden" data-copy="profile.admin"></a>
+    <a href="/admin" id="adminLink" class="nav-btn hidden" data-copy="profile.admin"></a>
   </header>
   <div class="stack">
     <form class="card" id="profileForm">
       <!-- LOGO_IMG -->
       <h2 data-copy="profile.heading"></h2>
-      <p class="email-line" id="emailLine"></p>
+      <p class="email-line"><span id="emailLine"></span><button type="button" class="link-btn" id="changeEmailBtn" data-copy="profile.changeEmail"></button></p>
+      <div class="notice" id="emailNotice"></div>
       <label class="photo-pick" id="photoPick">
         <span class="photo-circle">
           <img class="hidden" alt="">
@@ -110,6 +110,33 @@
 
     <button type="button" class="danger" id="signOutBtn" data-copy="profile.signOut"></button>
   </div>
+
+<!-- Changing your email, one step at a time: your passkey, the new
+     address, the code sent to it. The server holds each step to the one
+     before (see "Changing your own email" in server.js). -->
+<div class="sheet-bg hidden" id="emailSheet">
+  <div class="card">
+    <h2 data-copy="profile.changeEmailHeading"></h2>
+    <div id="stepPasskey">
+      <p data-copy="profile.changeEmailPasskeyHint"></p>
+      <div class="error" id="passkeyStepError"></div>
+      <button type="button" class="passkey-btn" id="reauthBtn" data-copy="profile.changeEmailPasskey"></button>
+    </div>
+    <form id="stepAddress" class="hidden">
+      <p data-copy="profile.changeEmailAddressHint"></p>
+      <div class="error" id="addressError"></div>
+      <input type="email" id="newEmail" placeholder="New email" autocomplete="email" autocapitalize="off" spellcheck="false">
+      <button type="submit" id="sendCodeBtn" data-copy="profile.changeEmailSend"></button>
+    </form>
+    <form id="stepCode" class="hidden">
+      <p id="codeHint"></p>
+      <div class="error" id="codeError"></div>
+      <input type="text" class="code" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+      <button type="submit" id="codeBtn">Continue</button>
+    </form>
+    <p style="margin:14px 0 0"><button type="button" class="link-btn" onclick="closeEmailSheet()">Cancel</button></p>
+  </div>
+</div>
 
 <script src="/copy.js"></script>
 <script src="/vendor/cropperjs-1.6.3/cropper.min.js"></script>
@@ -252,6 +279,105 @@ document.getElementById('addPasskeyBtn').addEventListener('click', (e) => {
       notice.textContent = t('profile.added');
       loadPasskeys();
     }
+  });
+});
+
+// ---------------- Changing your email ----------------
+const STEPS = ['stepPasskey', 'stepAddress', 'stepCode'];
+function showStep(id){
+  STEPS.forEach((step) => document.getElementById(step).classList.toggle('hidden', step !== id));
+  ['passkeyStepError', 'addressError', 'codeError'].forEach((e) => { document.getElementById(e).textContent = ''; });
+}
+function closeEmailSheet(){
+  document.getElementById('emailSheet').classList.add('hidden');
+}
+document.getElementById('emailSheet').addEventListener('click', (e) => { if (e.target.id === 'emailSheet') closeEmailSheet(); });
+
+document.getElementById('changeEmailBtn').addEventListener('click', () => {
+  document.getElementById('emailNotice').textContent = '';
+  document.getElementById('newEmail').value = '';
+  showStep('stepPasskey');
+  document.getElementById('emailSheet').classList.remove('hidden');
+});
+
+// 1. Your passkey, with Face ID or the like.
+document.getElementById('reauthBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('passkeyStepError');
+  busy(e.currentTarget, errorEl, async () => {
+    const start = await postJson('/api/auth/reauth/options');
+    if (signedOut(start.res)) return;
+    if (!start.res.ok){ errorEl.textContent = t('welcome.failed') + detail(start.data.error || start.res.status); return; }
+    let response;
+    try{
+      response = await startAuthentication({ optionsJSON: start.data.options });
+    }catch(err){
+      errorEl.textContent = passkeyErrorText(err);
+      return;
+    }
+    const { res, data } = await postJson('/api/auth/reauth/verify', { response });
+    if (!res.ok){ errorEl.textContent = t('profile.changeEmailPasskeyFailed') + detail(data.error || res.status); return; }
+    showStep('stepAddress');
+    document.getElementById('newEmail').focus();
+  });
+});
+
+// The passkey check has run out (15 minutes, one change): start over.
+function backToPasskey(){
+  showStep('stepPasskey');
+  document.getElementById('passkeyStepError').textContent = t('profile.changeEmailAgain');
+}
+
+// 2. The new address, which gets a code.
+let newEmail = '';
+async function sendChangeCode(errorEl){
+  const { res, data } = await postJson('/api/profile/email/start', { email: document.getElementById('newEmail').value });
+  if (signedOut(res)) return false;
+  if (data.reason === 'reauth_required'){ backToPasskey(); return false; }
+  if (res.ok){ newEmail = data.email; return true; }
+  errorEl.textContent = data.reason === 'bad_email' ? t('welcome.badEmail')
+    : data.reason === 'same_email' ? t('profile.sameEmail')
+    : data.reason === 'email_unavailable' ? t('profile.emailUnavailable')
+    : data.reason === 'mail_failed' ? t('welcome.mailFailed')
+    : res.status === 429 ? t('welcome.tooMany')
+    : t('welcome.failed') + detail(data.error || res.status);
+  return false;
+}
+document.getElementById('stepAddress').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('addressError');
+  busy(document.getElementById('sendCodeBtn'), errorEl, async () => {
+    if (!(await sendChangeCode(errorEl))) return;
+    document.getElementById('codeHint').textContent = t('welcome.codeHint', { email: newEmail });
+    document.getElementById('code').value = '';
+    showStep('stepCode');
+    document.getElementById('code').focus();
+  });
+});
+
+// 3. The code, typed back. Then it's the email.
+document.getElementById('code').addEventListener('input', (e) => {
+  const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+  if (v !== e.target.value) e.target.value = v;
+  if (v.length === 6) document.getElementById('stepCode').requestSubmit();
+});
+document.getElementById('stepCode').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('codeError');
+  busy(document.getElementById('codeBtn'), errorEl, async () => {
+    const { res, data } = await postJson('/api/profile/email/verify', { code: document.getElementById('code').value });
+    if (signedOut(res)) return;
+    if (data.reason === 'reauth_required'){ backToPasskey(); return; }
+    if (!res.ok){
+      errorEl.textContent = data.reason === 'wrong_code' ? t('welcome.wrongCode')
+        : data.reason === 'expired' ? t('welcome.codeExpired')
+        : data.reason === 'email_unavailable' ? t('profile.emailUnavailable')
+        : res.status === 429 ? t('welcome.tooMany')
+        : t('welcome.failed') + detail(data.error || res.status);
+      return;
+    }
+    closeEmailSheet();
+    fill(data.person);
+    document.getElementById('emailNotice').textContent = t('profile.emailChanged');
   });
 });
 

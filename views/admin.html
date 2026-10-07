@@ -21,7 +21,6 @@
   .edit-card .name-row{display:flex;gap:10px;}
   .edit-card .name-row .field{flex:1;min-width:0;}
   header h1{margin:0;text-align:left;}
-  header a{color:var(--on-bg);font-size:13px;font-weight:600;text-decoration:underline;}
   .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);}
   .tabs button{
     width:auto;background:none;color:var(--muted);border-radius:0;padding:10px 12px;font-size:14px;
@@ -50,13 +49,10 @@
   .inline-form{display:flex;gap:8px;margin-bottom:14px;}
   .inline-form input{margin:0;}
   .inline-form button{width:auto;white-space:nowrap;}
-  .sheet-bg{position:fixed;inset:0;background:rgba(3,10,6,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;}
-  .sheet-bg .card{max-width:420px;}
   .secret{
     font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all;background:var(--field);
     border:1px solid var(--field-line);border-radius:10px;padding:12px;margin-bottom:12px;user-select:all;
   }
-  .sheet-buttons{display:flex;gap:8px;}
   .image-setting{margin-bottom:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;}
   .image-setting h3{margin:0 0 4px;font-size:15px;}
   .image-setting .buttons{display:flex;gap:8px;}
@@ -77,7 +73,7 @@
   <header>
     <div class="top">
       <!-- LOGO_IMG -->
-      <a href="/profile">Your account</a>
+      <a href="/profile" class="nav-btn" data-copy="admin.myProfile"></a>
     </div>
     <h1 data-copy="admin.heading"></h1>
   </header>

@@ -12,7 +12,15 @@ is this**, **what's their name and photo**, and **are they signed in**.
   lost or new phone does, and nobody has to ask the admin for it.
 - At **`/profile`** they change their name, photo, phone, Instagram,
   Venmo and Cash App, see their passkeys (add one, remove one they've
-  lost) and sign out.
+  lost) and sign out. **Changing their email** takes three steps: their
+  passkey (Face ID or the like, so a borrowed unlocked phone or a stolen
+  cookie isn't enough; good for 15 minutes and one change), a code sent
+  to the new address and typed back, and then a notice to the old
+  address with the new one masked (`a•••@domain`), the only warning its
+  owner gets if it wasn't them. A new address that already has an
+  account just "can't be used". The admin lands on the Account Manager
+  after signing in, with **My Profile** to their own and **Back to
+  manager** from it.
 - At **`/admin`**, the **Account Manager**, the admin sees everyone (the
   admin first, then by name) and can **Edit profile** (every field above
   except the photo, plus the email: a changed email counts as unconfirmed

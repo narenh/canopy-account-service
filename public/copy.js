@@ -77,6 +77,17 @@ const COPY = {
   // ---------------- Your profile, at /profile ----------------
   profile: {
     heading: 'Your Account',
+    changeEmail: 'Change',
+    changeEmailHeading: 'Change your email',
+    changeEmailPasskeyHint: "First, confirm it's you with your passkey.",
+    changeEmailPasskey: 'Confirm with passkey',
+    changeEmailPasskeyFailed: "That passkey couldn't be checked. Try again.",
+    changeEmailAgain: "That took a while. Confirm it's you again.",
+    changeEmailAddressHint: "Your new email. We'll send a code to it, and tell your old one about the change.",
+    changeEmailSend: 'Send code',
+    sameEmail: "That's already your email.",
+    emailUnavailable: "That email can't be used.",
+    emailChanged: 'Email changed.',
     firstName: 'First name',
     lastName: 'Last name',
     // US and Canadian numbers don't need the +1.

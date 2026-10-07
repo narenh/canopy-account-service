@@ -62,7 +62,7 @@ document.getElementById('setupBtn').addEventListener('click', (e) => {
     const { res, data } = await postJson('/api/auth/register/link', { code: CODE });
     if (data.reason === 'bad_link'){ show('badCard'); return; }
     if (!res.ok){ errorEl.textContent = t('welcome.failed') + detail(data.error || res.status); return; }
-    if (await finishRegistration(data.options, errorEl)) window.location.href = '/profile';
+    if (await finishRegistration(data.options, errorEl)) window.location.href = '/';
   });
 });
 </script>

@@ -327,3 +327,23 @@ body.has-backdrop .handle-field{
 }
 body.has-backdrop .handle-field input[type="text"]{background:none;}
 body.has-backdrop .photo-badge{border-color:var(--card-solid);}
+
+/* A small button over the page, between the Account Manager and the
+   admin's own profile. */
+.nav-btn{
+  display:inline-block;
+  background:var(--secondary);
+  color:var(--on-bg);
+  border:1px solid var(--field-line);
+  border-radius:10px;
+  padding:8px 14px;
+  font-size:13px;
+  font-weight:600;
+  text-decoration:none;
+}
+
+/* A card over a dimmed page, for one step-by-step task. */
+.sheet-bg{position:fixed;inset:0;background:rgba(3,10,6,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;}
+.sheet-bg .card{max-width:420px;}
+.sheet-buttons{display:flex;gap:8px;}
+
