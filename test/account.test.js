@@ -125,6 +125,16 @@ test('accounts, end to end', async (t) => {
     assert.equal(r.data.person.firstName, 'Ana Maria');
     assert.equal(r.data.person.venmo, null);
     assert.equal((await ana.patch('/api/profile', { firstName: 'A', lastName: 'L', venmoHandle: 'bad handle!' })).data.reason, 'bad_venmo');
+    // Phone: US/Canada without +1, anywhere else with +; stored as E.164.
+    const phone = async (value) => (await ana.patch('/api/profile', { firstName: 'Ana Maria', lastName: 'Lima', phone: value })).data;
+    assert.equal((await phone('(415) 555-1234')).person.phone, '+14155551234');
+    assert.equal((await phone('1 415.555.1234')).person.phone, '+14155551234');
+    assert.equal((await phone('+44 20 7946 0958')).person.phone, '+442079460958');
+    for (const bad of ['555-1234', '(015) 555-1234', '415-155-1234', '+1 415 555 123', 'call me', '+0 123 456 789']) {
+      assert.equal((await phone(bad)).reason, 'bad_phone', bad);
+    }
+    assert.equal((await phone('')).person.phone, null);
+    assert.equal((await phone('4155551234')).person.phone, '+14155551234');
     const form = new FormData();
     form.append('photo', new Blob([Buffer.from('ffd8ffe0', 'hex')], { type: 'image/jpeg' }), 'photo.jpg');
     const up = await ana.upload('/api/profile/photo', form);
@@ -159,6 +169,7 @@ test('accounts, end to end', async (t) => {
     const me = await browser(server).get('/api/session', { headers: { ...auth, 'X-Canopy-Session': ana.cookie } });
     assert.equal(me.data.person.id, anaId);
     assert.equal(me.data.person.email, 'ana@example.com');
+    assert.equal(me.data.person.phone, '+14155551234');
     assert.match(me.data.person.photoUrl, /\/photo\//);
 
     const ppl = await browser(server).get(`/api/people?ids=${anaId},${adminId},00000000-0000-0000-0000-000000000000`, { headers: auth });

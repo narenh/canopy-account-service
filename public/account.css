@@ -2,31 +2,32 @@
    (INLINE_STYLES), for the same reason its scripts are. Carried over from
    tickets' sign-in page. */
 :root{
-  /* Rainforest at night: near-black greens for the ground, the logo's
-     green for what you tap. Green is only ever a surface, a button or a
-     link -- body text stays near-white or a pale grey-green, so it reads.
-     Every text colour clears WCAG AA (4.5:1) on every surface it sits on,
-     most by a lot: --text 14.8:1 on --card, --muted 8.1:1, --on-accent on
-     --accent 8.0:1, --accent-text 9.5:1, --danger 7.8:1. Field borders
-     are 3.3:1 or better, the bar for "you can see where to type".
-     --accent is the logo's #00A400, a step brighter so dark text on it
-     reads (white on the logo green itself is only 3.3:1). */
-  --bg:#0b1510;
-  --bg-glow:#163222;        /* light through the canopy, top of the page */
-  --card:#12201a;
-  --line:#25392e;
-  --field:#0a130e;
-  --field-line:#527561;
-  --secondary:#1a2b22;
-  --text:#ecf2ec;
-  --muted:#a6b8ab;
-  --placeholder:#7d9285;
+  /* Rainforest canopy: deep forest greens for the ground (not black), the
+     logo's green for what you tap. Green is only ever a surface, a button
+     or a link -- body text stays near-white or a pale grey-green, so it
+     reads. Every text colour clears WCAG AA (4.5:1) on every surface it
+     sits on: --text 11.1:1 on --card, --muted 7.3:1, --on-accent on
+     --accent 8.0:1, --accent-text 7.6:1, --danger 6.3:1, --placeholder
+     6.1:1 on --field. Field borders are 3.6:1 or better, the bar for "you
+     can see where to type". --accent is the logo's #00A400 a step
+     brighter, so dark text on it reads (white on the logo green itself
+     is only 3.3:1). */
+  --bg:#183022;
+  --bg-glow:#24493a;        /* light through the canopy, top of the page */
+  --card:#1f3b2d;
+  --line:#36553f;
+  --field:#142a1e;
+  --field-line:#6f9580;
+  --secondary:#29483a;
+  --text:#f0f5f0;
+  --muted:#bccdc0;
+  --placeholder:#93aa9b;
   --accent:#2ec44f;         /* buttons, the photo ring, badges */
   --on-accent:#03190a;      /* text and icons on --accent */
-  --accent-text:#5edb78;    /* links */
-  --danger:#f29a8c;
-  --avatar:#1f3328;
-  --silhouette:#4f6658;
+  --accent-text:#6fe387;    /* links */
+  --danger:#f7a597;
+  --avatar:#2c4a3b;
+  --silhouette:#6b8a77;
 }
 *{box-sizing:border-box;}
 body{
@@ -78,7 +79,7 @@ p{
   cursor:pointer;
 }
 /* 16px: iOS Safari zooms the page in when a smaller control takes focus. */
-input[type="email"], input[type="text"], input[type="password"]{
+input[type="email"], input[type="text"], input[type="password"], input[type="tel"]{
   width:100%;
   background:var(--field);
   color:var(--text);
@@ -135,7 +136,7 @@ button.secondary{
   color:var(--text);
   border:1px solid var(--field-line);
 }
-button.danger{background:none;color:var(--danger);border:1px solid rgba(242,154,140,.45);}
+button.danger{background:none;color:var(--danger);border:1px solid rgba(247,165,151,.5);}
 .passkey-btn{display:flex;align-items:center;justify-content:center;gap:8px;}
 .passkey-btn svg{width:20px;height:20px;flex:0 0 auto;}
 .or{
@@ -219,6 +220,10 @@ button.danger{background:none;color:var(--danger);border:1px solid rgba(242,154,
    toolbar. The page colour moves to html, so body doesn't paint a solid
    box over the backdrop (z-index -1). */
 html.has-backdrop{background:var(--bg);}
+/* A label over a field: what goes in it, even once it's filled in. */
+.field-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 6px 2px;text-align:left;}
+.field{margin-bottom:12px;}
+.field input, .field .venmo-field{margin-bottom:0;}
 html.has-backdrop body{background:transparent;}
 body.has-backdrop::before{
   content:"";
@@ -263,7 +268,7 @@ body.has-backdrop::after{
   mask-image:linear-gradient(to top, #000, transparent);
 }
 body.has-backdrop .card{
-  background:rgba(14,28,21,0.55);
+  background:rgba(31,59,45,0.6);
   border-color:rgba(236,242,236,0.14);
   -webkit-backdrop-filter:blur(20px) saturate(140%);
   backdrop-filter:blur(20px) saturate(140%);
@@ -276,4 +281,4 @@ body.has-backdrop .venmo-field{
   border-color:rgba(236,242,236,0.3);
 }
 body.has-backdrop .venmo-field input[type="text"]{background:none;}
-body.has-backdrop .photo-badge{border-color:#1d3027;}
+body.has-backdrop .photo-badge{border-color:#27463a;}

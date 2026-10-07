@@ -215,6 +215,28 @@ function cleanVenmo(raw) {
 
 const BAD_VENMO = { error: 'a Venmo username is letters, numbers, - and _ only', reason: 'bad_venmo' };
 
+// A phone number, as +<country code><number> (E.164). Spaces, dashes,
+// dots and brackets are dropped. With no + it's a US/Canada number: 10
+// digits, or 11 starting with 1, and the area code and exchange can't
+// start with 0 or 1 (the North American plan). With a +, 8 to 15 digits
+// (E.164's range), and a +1 number gets the same North American checks.
+// Empty clears it (null); anything else invalid is false.
+function cleanPhone(raw) {
+  const v = String(raw == null ? '' : raw).trim();
+  if (!v) return null;
+  if (!/^\+?[\d\s().-]+$/.test(v)) return false;
+  let digits = v.replace(/\D/g, '');
+  if (!v.startsWith('+')) {
+    if (digits.length === 10) digits = '1' + digits;
+    else if (!(digits.length === 11 && digits[0] === '1')) return false;
+  }
+  if (digits.length < 8 || digits.length > 15 || digits[0] === '0') return false;
+  if (digits[0] === '1' && !/^1[2-9]\d{2}[2-9]\d{6}$/.test(digits)) return false;
+  return '+' + digits;
+}
+
+const BAD_PHONE = { error: 'that doesn\'t look like a phone number', reason: 'bad_phone' };
+
 // Everything about a person a site gets: /api/session for the visitor,
 // and the account service's own pages.
 function personView(req, p) {
@@ -225,7 +247,8 @@ function personView(req, p) {
     lastName: p.lastName,
     shortName: p.shortName,
     photoUrl: photoUrlFor(req, p),
-    venmo: p.venmo
+    venmo: p.venmo,
+    phone: p.phone
   };
 }
 
@@ -667,8 +690,14 @@ app.patch('/api/profile', requireSignedIn, (req, res) => {
     venmo = cleanVenmo(body.venmoHandle);
     if (venmo === false) return res.status(400).json(BAD_VENMO);
   }
+  let phone;
+  if (body.phone !== undefined) {
+    phone = cleanPhone(body.phone);
+    if (phone === false) return res.status(400).json(BAD_PHONE);
+  }
   req.person = store.renamePerson(req.person.id, names.firstName, names.lastName);
   if (venmo !== undefined) req.person = store.setPersonVenmo(req.person.id, venmo);
+  if (phone !== undefined) req.person = store.setPersonPhone(req.person.id, phone);
   res.json(meView(req));
 });
 

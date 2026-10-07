@@ -75,11 +75,16 @@ const COPY = {
   // ---------------- Your profile, at /profile ----------------
   profile: {
     heading: 'Your Account',
+    firstName: 'First name',
+    lastName: 'Last name',
+    venmo: 'Venmo (optional)',
+    // US and Canadian numbers don't need the +1.
+    phone: 'Phone (optional)',
+    badPhone: "That doesn't look like a phone number. Outside the US and Canada, start with + and the country code.",
     saved: 'Saved.',
     failed: "Couldn't save. Try again.",
     photoHint: 'Tap your photo to change it.',
     passkeysHeading: 'Passkeys',
-    passkeysHint: 'Each passkey signs you in on the devices it syncs to. Add one for a phone that doesn’t have yours; remove one you’ve lost.',
     passkeyAdded: 'Added {date}',
     passkeyUsed: 'last used {date}',
     passkeyNeverUsed: 'not used yet',
@@ -89,8 +94,7 @@ const COPY = {
     lastPasskey: "That's your only passkey. Add another before removing it.",
     addPasskey: 'Add a passkey',
     added: 'Passkey added.',
-    signOut: 'Sign out',
-    signOutHint: 'Signs you out of every Canopy site on this browser.',
+    signOut: 'Sign out of all Canopy sites',
     admin: 'Manage people'
   },
 

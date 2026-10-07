@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Your Account · Canopy</title>
-<meta name="theme-color" content="#0b1510">
+<meta name="theme-color" content="#183022">
 <link rel="stylesheet" href="/account.css">
 <style>
   .stack{max-width:400px;margin:0 auto;display:flex;flex-direction:column;gap:16px;padding-bottom:40px;}
@@ -24,15 +24,18 @@
   .passkey .what span{color:var(--muted);display:block;font-size:12px;}
   .passkey button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .email-line{color:var(--muted);font-size:13px;text-align:center;margin:0 0 16px;}
-  .top-links{display:flex;justify-content:space-between;align-items:center;max-width:400px;margin:0 auto 12px;}
-  .top-links a{color:var(--accent-text);font-size:13px;font-weight:600;text-decoration:none;}
+  /* The logo, centred over the page, with the admin's link to one side. */
+  .page-head{position:relative;max-width:400px;margin:4px auto 16px;min-height:24px;}
+  .page-head .site-logo{margin:0 auto;}
+  .page-head a{position:absolute;right:0;top:0;color:var(--accent-text);font-size:13px;font-weight:600;text-decoration:none;}
+  .name-row .field{flex:1;min-width:0;}
 </style>
 </head>
 <body>
-  <div class="top-links">
-    <span></span>
+  <header class="page-head">
+    <!-- LOGO_IMG -->
     <a href="/admin" id="adminLink" class="hidden" data-copy="profile.admin"></a>
-  </div>
+  </header>
   <div class="stack">
     <form class="card" id="profileForm">
       <h2 data-copy="profile.heading"></h2>
@@ -51,15 +54,30 @@
         </span>
         <input type="file" accept="image/*" aria-label="Change your photo">
       </label>
+      <!-- Labelled above each box, so what a box is stays said once it's
+           filled in. -->
       <div class="name-row">
-        <input type="text" id="firstName" placeholder="First name" autocomplete="given-name" maxlength="60">
-        <input type="text" id="lastName" placeholder="Last name" autocomplete="family-name" maxlength="60">
+        <div class="field">
+          <label class="field-label" for="firstName" data-copy="profile.firstName"></label>
+          <input type="text" id="firstName" autocomplete="given-name" maxlength="60">
+        </div>
+        <div class="field">
+          <label class="field-label" for="lastName" data-copy="profile.lastName"></label>
+          <input type="text" id="lastName" autocomplete="family-name" maxlength="60">
+        </div>
       </div>
-      <label class="venmo-field">
-        <span class="venmo-at" aria-hidden="true">@</span>
-        <input type="text" id="venmoHandle" placeholder="Venmo username (optional)" maxlength="30"
-          autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Venmo username (optional)">
-      </label>
+      <div class="field">
+        <label class="field-label" for="venmoHandle" data-copy="profile.venmo"></label>
+        <label class="venmo-field">
+          <span class="venmo-at" aria-hidden="true">@</span>
+          <input type="text" id="venmoHandle" maxlength="30"
+            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+      <div class="field">
+        <label class="field-label" for="phone" data-copy="profile.phone"></label>
+        <input type="tel" id="phone" inputmode="tel" autocomplete="tel" maxlength="25">
+      </div>
       <div class="error" id="profileError"></div>
       <div class="notice" id="profileNotice"></div>
       <button type="submit" id="saveBtn">Save</button>
@@ -67,17 +85,13 @@
 
     <div class="card">
       <h3 data-copy="profile.passkeysHeading"></h3>
-      <p class="left" data-copy="profile.passkeysHint" style="margin-bottom:8px"></p>
       <div id="passkeyList"></div>
       <div class="error" id="passkeyError"></div>
       <div class="notice" id="passkeyNotice"></div>
       <button type="button" class="secondary passkey-btn" id="addPasskeyBtn" data-copy="profile.addPasskey"></button>
     </div>
 
-    <div class="card">
-      <p data-copy="profile.signOutHint" style="margin-bottom:12px"></p>
-      <button type="button" class="danger" id="signOutBtn" data-copy="profile.signOut"></button>
-    </div>
+    <button type="button" class="danger" id="signOutBtn" data-copy="profile.signOut"></button>
   </div>
 
 <script src="/copy.js"></script>
@@ -95,11 +109,19 @@ function signedOut(res){
   return false;
 }
 
+// +14155551234 as (415) 555-1234; any other country as stored.
+function formatPhone(phone){
+  if (!phone) return '';
+  const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(phone);
+  return m ? '(' + m[1] + ') ' + m[2] + '-' + m[3] : phone;
+}
+
 function fill(person){
   document.getElementById('emailLine').textContent = person.email;
   document.getElementById('firstName').value = person.firstName;
   document.getElementById('lastName').value = person.lastName;
   document.getElementById('venmoHandle').value = person.venmo || '';
+  document.getElementById('phone').value = formatPhone(person.phone);
   document.getElementById('adminLink').classList.toggle('hidden', !person.isAdmin);
   if (person.photoUrl) picker.show(person.photoUrl);
 }
@@ -135,10 +157,12 @@ document.getElementById('profileForm').addEventListener('submit', (e) => {
     const { res, data } = await sendJson('PATCH', '/api/profile', {
       firstName: document.getElementById('firstName').value,
       lastName: document.getElementById('lastName').value,
-      venmoHandle: document.getElementById('venmoHandle').value
+      venmoHandle: document.getElementById('venmoHandle').value,
+      phone: document.getElementById('phone').value
     });
     if (signedOut(res)) return;
     if (data.reason === 'bad_venmo'){ errorEl.textContent = t('welcome.badVenmo'); return; }
+    if (data.reason === 'bad_phone'){ errorEl.textContent = t('profile.badPhone'); return; }
     if (!res.ok){ errorEl.textContent = data.error === 'first and last name are both required' ? t('welcome.nameRequired') : t('profile.failed'); return; }
     fill(data.person);
     notice.textContent = t('profile.saved');
