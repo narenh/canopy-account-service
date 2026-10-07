@@ -5,10 +5,6 @@ const crypto = require('crypto');
 const multer = require('multer');
 const webauthn = require('@simplewebauthn/server');
 
-// A one-time import from tickets, when asked for (lib/startupImport.js).
-// Before the store opens, so it's the first thing to touch the database.
-if (process.env.IMPORT_FROM_TICKETS) require('./lib/startupImport').importFromTicketsAtStartup(process.env.IMPORT_FROM_TICKETS);
-
 const store = require('./lib/db').init();
 const photoStore = require('./lib/photoStore');
 const { createImageStore } = require('./lib/uploadedImage');
@@ -168,7 +164,7 @@ function photoUrlFor(req, person) {
 // marked in meta as admin_person_id. Only they open /admin.
 //
 // There is never an account without an admin. On a brand-new install
-// (nothing imported) the sign-in page is only the setup password
+// the sign-in page is only the setup password
 // (ADMIN_PASSWORD), and the server refuses every other sign-in and
 // sign-up until it's been entered; whoever then signs up on that browser
 // is the admin. ADMIN_RECOVERY=1 opens the setup password again for an
@@ -347,7 +343,7 @@ function checkPassword(candidate, expected) {
 // ---------------- Passkeys ----------------
 //
 // Passkeys belong to canopysf.com (lib/domain.js), so the same passkey
-// signs in from any Canopy page, and the ones tickets made keep working.
+// signs in from any Canopy page.
 // The phone shows them as "Canopy"; changing that name doesn't affect a
 // passkey already made.
 

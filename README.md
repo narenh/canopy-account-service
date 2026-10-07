@@ -41,14 +41,10 @@ are no redirect dances, no tokens handed to other domains, no consent
 screens. It only works for sites under `canopysf.com`, because it relies
 on the browser sharing one cookie between them. There are no passwords
 for anyone (the one setup password is for the admin and the server, see
-"The first admin"), and no phone numbers. It doesn't send notifications:
-the only email it ever sends is the sign-in code. It doesn't hold any
-site's own data either. Tickets' seats, orders and calendar feeds stay
-in tickets, keyed by the same person ids as here. And for now there's
-no way to change an account's email, not even from the admin.
-
-Switching tickets over to this service is a separate job. Until then
-tickets keeps doing its own sign-in, and nothing here changes it.
+"The first admin"). The only emails it sends are sign-in codes and, when
+someone changes their email, a notice to the old address. It doesn't
+hold any site's own data either: tickets' seats, orders and calendar
+feeds stay in tickets, keyed by the person ids from here.
 
 ## How it works
 
@@ -85,8 +81,6 @@ tickets keeps doing its own sign-in, and nothing here changes it.
   backdrop as files in `DATA_DIR`.
 - `client/canopy-account.js` is the file Canopy sites copy in (see "For
   Canopy sites").
-- `scripts/import-from-tickets.js` is the one-time copy of everyone out of
-  tickets (see "Importing from tickets").
 - `views/` and `public/` are the pages: `welcome.html` (sign in / sign
   up), `profile.html`, `setup.html` (a setup link), `admin.html`, and
   the shared `account.js`, `account.css`, `copy.js` (every sentence the
@@ -112,9 +106,7 @@ passkey.
 
 **Passkeys belong to `canopysf.com`** (override with `PASSKEY_RP_ID`), not
 to `account.canopysf.com`. So one passkey signs in from any Canopy
-subdomain, and the passkeys tickets already made (also for
-`canopysf.com`) keep working here after the import. Phones list them as
-"Canopy". On any other host (localhost, in development) they're made for
+subdomain. Phones list them as "Canopy". On any other host (localhost, in development) they're made for
 that host. The server keeps only each passkey's public key. Nothing in
 the database can sign anyone in.
 
@@ -145,8 +137,7 @@ who has an account here.
   The photo is uploaded right after.
 - **An email with an account** goes on to make **a new passkey** for that
   account, on this phone. That covers a new phone, a lost phone, a
-  browser that doesn't sync, and anyone who was imported from tickets
-  without a passkey. It's self-serve on purpose: whoever can read the
+  browser that doesn't sync, and anyone whose passkeys the admin reset. It's self-serve on purpose: whoever can read the
   account's email can get in, and the admin doesn't have to be awake.
 
 That last point is the real security boundary. **An account is exactly
@@ -188,7 +179,7 @@ same sign-in, marked in `meta` as `admin_person_id`. This works the same
 way as tickets.
 
 - **There is never an account without an admin.** On a brand-new install
-  (nothing imported) the sign-in page asks only for the **setup
+  the sign-in page asks only for the **setup
   password**, `ADMIN_PASSWORD`, and the server refuses every other
   sign-in and sign-up until it's been entered. Entering it is good for
   15 minutes on that browser. Whoever then signs up there is the admin.
@@ -515,8 +506,8 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
    told.
 5. **Environment variables**, from `.env.example`:
    - `ADMIN_PASSWORD`: the setup password. Keep it to yourself. It
-     isn't needed again after the admin exists (or after an import),
-     except for `ADMIN_RECOVERY`.
+     isn't needed again after the admin exists, except for
+     `ADMIN_RECOVERY`.
    - `ADMIN_RECOVERY`: leave unset. See "The first admin, and recovery".
    - `SMTP_HOST=smtp.mail.me.com`, `SMTP_PORT=587`, `SMTP_USER`,
      `SMTP_PASS`, `MAIL_FROM`: see "Email: iCloud SMTP".
@@ -524,6 +515,13 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
      `https://account.canopysf.com` and `canopysf.com`.
    - Leave `PORT` and `DATA_DIR` alone. The Dockerfile sets them.
 6. Deploy.
+7. **Make the admin.** Open `https://account.canopysf.com`. A new install
+   asks only for the setup password; enter `ADMIN_PASSWORD`, then sign
+   up (your email needs no code this once) and save a passkey. That
+   account is the admin, and you land on the Account Manager.
+8. **Add each Canopy site** in the Account Manager's **Sites** tab (e.g.
+   `tickets`), and give the key it shows, once, to that site as its
+   `CANOPY_ACCOUNT_KEY` (see "For Canopy sites").
 
 ### Confirming the volume is attached
 
@@ -596,105 +594,6 @@ Some things to know before relying on this:
 
 Without `SMTP_HOST` in production, nothing is sent and codes are never
 printed. Every code request fails with "couldn't send the email".
-
-## Importing from tickets
-
-A one-time copy of tickets' people into this service:
-
-- their ids, which stay the same so every site's records line up;
-- emails, names, Venmo and photos;
-- their passkeys, every column unchanged, so the phones that sign in to
-  tickets sign in here;
-- who the admin is;
-- tickets' uploaded logo, if it has one.
-
-The backdrop doesn't come across. Tickets' link-preview image is a movie
-still, and it doesn't belong behind the account sign-in page. The
-sign-in page has no backdrop until one is uploaded in the admin's
-Settings. With no logo uploaded either, the pages show the Canopy logo
-that ships with the service.
-
-**It only imports into an empty database, with no people in it yet.** So
-don't sign up or set up an admin on the live account service before
-importing. If you already have, stop it, delete `account.db`,
-`account.db-wal` and `account.db-shm` from the volume, and start over.
-
-### Without a terminal: on startup
-
-Coolify's terminal doesn't always work, so the service can do the import
-itself as it starts (`lib/startupImport.js`):
-
-1. In tickets' **Storages** tab, note the name of its volume (the one at
-   `/app/data`).
-2. In the account service's **Storages** tab, add a volume mount with
-   that same name and a destination of `/tickets-data`. Docker shares a
-   named volume between every container that mounts it, so this is
-   tickets' live data folder, seen from here. The import only reads it.
-3. Add the setting `IMPORT_FROM_TICKETS=/tickets-data` and redeploy.
-4. Read the deploy's logs. Before anything else opens the database, the
-   service runs a dry run, and only if that ends `intact.`, the real run.
-   Every line of both is in the log, ending in `import: done.` or in what
-   went wrong. The service starts either way; a failed import leaves the
-   database empty, to fix and redeploy.
-5. **Remove `IMPORT_FROM_TICKETS` and the `/tickets-data` mount**, and
-   redeploy. Left on, it does nothing (the database has people now, and
-   the log says so), but tickets' data has no business being mounted
-   here.
-
-Reading tickets' live `canopy.db` while tickets runs is fine: SQLite lets
-other processes read while one writes, and the import reads people,
-passkeys and the admin in one read transaction, so it sees a single
-consistent moment. Someone who signs up on tickets after that moment
-won't be in it.
-
-### With a terminal
-
-The exact Docker names depend on your Coolify install, so
-`docker volume ls` and `docker images` are how to find them:
-
-1. **Stop the account service** in Coolify, so nothing has the database
-   open while the import writes it.
-2. **Copy tickets' data onto the account volume**, into a folder of its
-   own, e.g. `/app/data/tickets-import/`:
-   - the database: either `canopy.db` with tickets stopped, or, with
-     tickets left running, one of its consistent daily snapshots,
-     `backups/sqlite/canopy-YYYY-MM-DD.db` (today's is made when tickets
-     starts and then daily);
-   - `photos/`;
-   - `logo-image` and `logo-image.json`, if they're there.
-
-   On the Coolify server both volumes are directories under
-   `/var/lib/docker/volumes/<name>/_data/`, so it's a `cp -a` from one to
-   the other.
-3. **A dry run first**, with the account service's image and its volume:
-
-   ```bash
-   docker run --rm -v <account-volume>:/app/data <account-image> \
-     node scripts/import-from-tickets.js --from /app/data/tickets-import --dry-run
-   ```
-
-   Using a snapshot instead of `canopy.db`, add
-   `--db /app/data/tickets-import/backups/sqlite/canopy-YYYY-MM-DD.db`.
-
-   A dry run imports into a scratch folder, checks it, and throws it
-   away. Nothing on the volume is touched. It prints how many people,
-   passkeys and photos came across, who the admin is, who has no
-   passkey yet (they'll sign in with an emailed code, which makes them
-   one), and any photo tickets had a date for but no file. Then every
-   person and passkey is read back from both sides and compared field by
-   field, photos by their bytes. It ends with `every person and passkey
-   checked: intact.`, or with a list of what differs and exit code 1.
-4. **The real run**: the same command without `--dry-run`. It does the
-   same checks against what it actually wrote.
-5. **Start the account service** and look for the startup line with the
-   right number of people. Sign in with a passkey that works on tickets:
-   it should work here, and the admin should be able to open `/admin`.
-6. **Delete `/app/data/tickets-import/`** afterwards. It's a full copy of
-   tickets' database, sitting on a volume it doesn't belong to.
-
-Emails come across trimmed and lowercased. Nobody imported counts as
-having had their email verified here until the first time they type a
-code.
 
 ## Storage & backups
 
