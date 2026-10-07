@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Your Account · Canopy</title>
+<meta name="theme-color" content="#0b1510">
 <link rel="stylesheet" href="/account.css">
 <style>
   .stack{max-width:400px;margin:0 auto;display:flex;flex-direction:column;gap:16px;padding-bottom:40px;}
@@ -18,13 +19,13 @@
     border-top:1px solid var(--line);
   }
   .passkey:first-child{border-top:none;}
-  .passkey svg{width:20px;height:20px;flex:0 0 auto;color:var(--gold);}
+  .passkey svg{width:20px;height:20px;flex:0 0 auto;color:var(--accent);}
   .passkey .what{flex:1;min-width:0;font-size:13px;line-height:1.35;}
   .passkey .what span{color:var(--muted);display:block;font-size:12px;}
   .passkey button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .email-line{color:var(--muted);font-size:13px;text-align:center;margin:0 0 16px;}
   .top-links{display:flex;justify-content:space-between;align-items:center;max-width:400px;margin:0 auto 12px;}
-  .top-links a{color:var(--gold);font-size:13px;font-weight:600;text-decoration:none;}
+  .top-links a{color:var(--accent-text);font-size:13px;font-weight:600;text-decoration:none;}
 </style>
 </head>
 <body>
@@ -40,13 +41,13 @@
         <span class="photo-circle">
           <img class="hidden" alt="">
           <svg class="placeholder" viewBox="0 0 64 64" aria-hidden="true">
-            <circle cx="32" cy="24" r="13" fill="#6e6e74"/>
-            <path d="M8 64c0-14 10.7-24 24-24s24 10 24 24z" fill="#6e6e74"/>
+            <circle cx="32" cy="24" r="13" fill="currentColor"/>
+            <path d="M8 64c0-14 10.7-24 24-24s24 10 24 24z" fill="currentColor"/>
           </svg>
         </span>
         <span class="photo-badge" aria-hidden="true">
-          <svg class="icon-add" viewBox="0 0 14 14"><path d="M7 1.5v11M1.5 7h11" stroke="#241c07" stroke-width="2.4" stroke-linecap="round"/></svg>
-          <svg class="icon-edit" viewBox="0 0 14 14"><path d="M2 12l.6-3L9.4 2.2a1.4 1.4 0 0 1 2 0l.4.4a1.4 1.4 0 0 1 0 2L5 11.4z" fill="#241c07"/></svg>
+          <svg class="icon-add" viewBox="0 0 14 14"><path d="M7 1.5v11M1.5 7h11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+          <svg class="icon-edit" viewBox="0 0 14 14"><path d="M2 12l.6-3L9.4 2.2a1.4 1.4 0 0 1 2 0l.4.4a1.4 1.4 0 0 1 0 2L5 11.4z" fill="currentColor"/></svg>
         </span>
         <input type="file" accept="image/*" aria-label="Change your photo">
       </label>

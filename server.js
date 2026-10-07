@@ -851,9 +851,11 @@ function escapeAttr(value) {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// The uploaded logo, or the Canopy logo that ships in public/ until one is.
 function logoImgTag() {
   const meta = logoImageStore.getMeta();
-  return meta ? `<img src="/logo-image?v=${meta.uploadedAt}" alt="Canopy" class="site-logo">` : '';
+  const src = meta ? `/logo-image?v=${meta.uploadedAt}` : '/canopy-logo.png';
+  return `<img src="${src}" alt="Canopy" class="site-logo">`;
 }
 
 function backdropUrl() {

@@ -2,19 +2,38 @@
    (INLINE_STYLES), for the same reason its scripts are. Carried over from
    tickets' sign-in page. */
 :root{
-  --gold:#c9a24b;
-  --bg:#0b0b0d;
-  --card:#151517;
-  --line:#2a2a2a;
-  --muted:#9a9a9a;
-  --danger:#e2857a;
+  /* Rainforest at night: near-black greens for the ground, the logo's
+     green for what you tap. Green is only ever a surface, a button or a
+     link -- body text stays near-white or a pale grey-green, so it reads.
+     Every text colour clears WCAG AA (4.5:1) on every surface it sits on,
+     most by a lot: --text 14.8:1 on --card, --muted 8.1:1, --on-accent on
+     --accent 8.0:1, --accent-text 9.5:1, --danger 7.8:1. Field borders
+     are 3.3:1 or better, the bar for "you can see where to type".
+     --accent is the logo's #00A400, a step brighter so dark text on it
+     reads (white on the logo green itself is only 3.3:1). */
+  --bg:#0b1510;
+  --bg-glow:#163222;        /* light through the canopy, top of the page */
+  --card:#12201a;
+  --line:#25392e;
+  --field:#0a130e;
+  --field-line:#527561;
+  --secondary:#1a2b22;
+  --text:#ecf2ec;
+  --muted:#a6b8ab;
+  --placeholder:#7d9285;
+  --accent:#2ec44f;         /* buttons, the photo ring, badges */
+  --on-accent:#03190a;      /* text and icons on --accent */
+  --accent-text:#5edb78;    /* links */
+  --danger:#f29a8c;
+  --avatar:#1f3328;
+  --silhouette:#4f6658;
 }
 *{box-sizing:border-box;}
 body{
   margin:0;
   min-height:100vh;
-  background:var(--bg);
-  color:#fff;
+  background:radial-gradient(120% 60% at 50% -10%, var(--bg-glow) 0%, var(--bg) 65%) fixed, var(--bg);
+  color:var(--text);
   font-family:-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   padding:20px;
 }
@@ -51,7 +70,7 @@ p{
 .link-btn{
   width:auto;
   background:none;
-  color:var(--gold);
+  color:var(--accent-text);
   padding:0;
   font-size:13px;
   font-weight:600;
@@ -61,14 +80,16 @@ p{
 /* 16px: iOS Safari zooms the page in when a smaller control takes focus. */
 input[type="email"], input[type="text"], input[type="password"]{
   width:100%;
-  background:#0f0f10;
-  color:#fff;
-  border:1px solid #3a3a3a;
+  background:var(--field);
+  color:var(--text);
+  border:1px solid var(--field-line);
   border-radius:10px;
   padding:12px 14px;
   font-size:16px;
   margin-bottom:12px;
 }
+input::placeholder{color:var(--placeholder);opacity:1;}
+input:focus{outline:2px solid var(--accent);outline-offset:1px;}
 input.code{font-size:22px;letter-spacing:6px;text-align:center;font-variant-numeric:tabular-nums;}
 .name-row{display:flex;gap:10px;}
 .name-row input{min-width:0;}
@@ -77,27 +98,28 @@ input.code{font-size:22px;letter-spacing:6px;text-align:center;font-variant-nume
 .venmo-field{
   display:flex;
   align-items:baseline;
-  background:#0f0f10;
-  border:1px solid #3a3a3a;
+  background:var(--field);
+  border:1px solid var(--field-line);
   border-radius:10px;
   padding:0 14px;
   margin-bottom:12px;
   cursor:text;
 }
 .venmo-at{color:var(--muted);font-size:16px;flex:0 0 auto;}
+.venmo-field:focus-within{outline:2px solid var(--accent);outline-offset:1px;}
 .venmo-field input[type="text"]{
   border:none;
   background:none;
   padding:12px 0 12px 2px;
   margin:0;
-  outline:none;
+  outline:none !important;
   flex:1;
   min-width:0;
 }
 button{
   width:100%;
-  background:var(--gold);
-  color:#241c07;
+  background:var(--accent);
+  color:var(--on-accent);
   border:none;
   border-radius:12px;
   padding:12px;
@@ -107,12 +129,13 @@ button{
   font-family:inherit;
 }
 button:disabled{opacity:.5;cursor:not-allowed;}
+button:focus-visible{outline:2px solid var(--text);outline-offset:2px;}
 button.secondary{
-  background:#1e1e21;
-  color:#fff;
-  border:1px solid #3a3a3a;
+  background:var(--secondary);
+  color:var(--text);
+  border:1px solid var(--field-line);
 }
-button.danger{background:none;color:var(--danger);border:1px solid rgba(226,133,122,.4);}
+button.danger{background:none;color:var(--danger);border:1px solid rgba(242,154,140,.45);}
 .passkey-btn{display:flex;align-items:center;justify-content:center;gap:8px;}
 .passkey-btn svg{width:20px;height:20px;flex:0 0 auto;}
 .or{
@@ -123,7 +146,7 @@ button.danger{background:none;color:var(--danger);border:1px solid rgba(226,133,
   font-size:12px;
   margin:18px 0 14px;
 }
-.or::before, .or::after{content:"";flex:1;height:1px;background:rgba(255,255,255,.14);}
+.or::before, .or::after{content:"";flex:1;height:1px;background:rgba(236,242,236,.14);}
 .hint{font-size:12px;margin:12px 0 0;}
 .small-link{margin:16px 0 0;}
 .small-link button{
@@ -142,7 +165,7 @@ button.danger{background:none;color:var(--danger);border:1px solid rgba(226,133,
   margin-bottom:6px;
   text-align:center;
 }
-.notice{color:#9fd39a;font-size:13px;min-height:18px;margin-bottom:6px;text-align:center;}
+.notice{color:var(--accent-text);font-size:13px;min-height:18px;margin-bottom:6px;text-align:center;}
 
 /* The photo, like a phone's contact photo: a silhouette in a circle with
    a "+" badge until there's a photo, then the photo with a pencil badge.
@@ -160,15 +183,15 @@ button.danger{background:none;color:var(--danger);border:1px solid rgba(226,133,
   height:100%;
   border-radius:50%;
   overflow:hidden;
-  background:#26262a;
-  border:1px solid rgba(255,255,255,.12);
+  background:var(--avatar);
+  border:1px solid rgba(236,242,236,.12);
   display:flex;
   align-items:flex-end;
   justify-content:center;
 }
-.photo-pick.has-photo .photo-circle{border:2px solid var(--gold);}
+.photo-pick.has-photo .photo-circle{border:2px solid var(--accent);}
 .photo-circle img{width:100%;height:100%;object-fit:cover;display:block;}
-.photo-circle svg{width:96%;height:96%;display:block;}
+.photo-circle svg{width:96%;height:96%;display:block;color:var(--silhouette);}
 .photo-badge{
   position:absolute;
   right:2px;
@@ -176,7 +199,8 @@ button.danger{background:none;color:var(--danger);border:1px solid rgba(226,133,
   width:32px;
   height:32px;
   border-radius:50%;
-  background:var(--gold);
+  background:var(--accent);
+  color:var(--on-accent);
   border:3px solid var(--card);
   display:flex;
   align-items:center;
@@ -214,7 +238,7 @@ body.has-backdrop::after{
   right:0;
   height:100lvh;
   z-index:-1;
-  background:rgba(0,0,0,0.25);
+  background:rgba(4,12,7,0.3);
 }
 /* iOS Safari 26 paints the strips behind its status bar and toolbar a
    single solid colour it picks from a fixed bar touching that edge. These
@@ -239,17 +263,17 @@ body.has-backdrop::after{
   mask-image:linear-gradient(to top, #000, transparent);
 }
 body.has-backdrop .card{
-  background:rgba(21,21,23,0.45);
-  border-color:rgba(255,255,255,0.14);
+  background:rgba(14,28,21,0.55);
+  border-color:rgba(236,242,236,0.14);
   -webkit-backdrop-filter:blur(20px) saturate(140%);
   backdrop-filter:blur(20px) saturate(140%);
   box-shadow:0 10px 40px rgba(0,0,0,0.35);
 }
-body.has-backdrop p{color:#d0d0d0;}
+body.has-backdrop p{color:#dbe5dd;}
 body.has-backdrop input[type="email"], body.has-backdrop input[type="text"], body.has-backdrop input[type="password"],
 body.has-backdrop .venmo-field{
-  background:rgba(0,0,0,0.35);
-  border-color:rgba(255,255,255,0.18);
+  background:rgba(4,12,7,0.45);
+  border-color:rgba(236,242,236,0.3);
 }
 body.has-backdrop .venmo-field input[type="text"]{background:none;}
-body.has-backdrop .photo-badge{border-color:#2a2a2d;}
+body.has-backdrop .photo-badge{border-color:#1d3027;}

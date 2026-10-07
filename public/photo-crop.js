@@ -40,7 +40,7 @@
       '.pc-overlay{position:fixed;inset:0;z-index:200;background:#000;display:flex;flex-direction:column;',
       'padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));',
       'font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;}',
-      '.pc-hint{color:#ccc;font-size:13px;text-align:center;margin:6px 0 12px;}',
+      '.pc-hint{color:var(--muted,#a6b8ab);font-size:13px;text-align:center;margin:6px 0 12px;}',
       // Clipped, and below the buttons: whatever the crop area does, Cancel
       // stays on top and tappable.
       '.pc-stage{flex:1;min-height:0;position:relative;overflow:hidden;}',
@@ -50,8 +50,8 @@
       '.pc-actions{display:flex;gap:10px;margin-top:14px;position:relative;z-index:2;}',
       '.pc-use:disabled{opacity:.45;}',
       '.pc-actions button{flex:1;border:none;border-radius:12px;padding:12px;font-size:15px;font-weight:700;cursor:pointer;}',
-      '.pc-cancel{background:#1e1e1e;color:#fff;border:1px solid #3a3a3a !important;}',
-      '.pc-use{background:#c9a24b;color:#241c07;}'
+      '.pc-cancel{background:var(--secondary,#1a2b22);color:var(--text,#ecf2ec);border:1px solid var(--field-line,#527561) !important;}',
+      '.pc-use{background:var(--accent,#2ec44f);color:var(--on-accent,#03190a);}'
     ].join('');
     document.head.appendChild(style);
   }
