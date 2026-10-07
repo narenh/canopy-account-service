@@ -463,7 +463,7 @@ app.post('/api/auth/email/start', attachSession(true), handle(async (req, res) =
   codeSendLimits.hit(req, email);
   const code = store.issueEmailCode(req.sess.idHash, email);
   try {
-    await mailer.sendCode(email, code);
+    await mailer.sendCode(email, code, emailLogoUrl(req));
   } catch (err) {
     console.error(`[canopy-account] sending a code failed: ${err.message}`);
     return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
@@ -972,6 +972,13 @@ function escapeAttr(value) {
 }
 
 // The uploaded logo, or the Canopy logo that ships in public/ until one is.
+// The logo as the code email shows it: absolute, since mail apps fetch it
+// from the open web, and following an uploaded logo like the pages do.
+function emailLogoUrl(req) {
+  const meta = logoImageStore.getMeta();
+  return `${publicBase(req)}${meta ? `/logo-image?v=${meta.uploadedAt}` : '/canopy-logo.png'}`;
+}
+
 function logoImgTag() {
   const meta = logoImageStore.getMeta();
   const src = meta ? `/logo-image?v=${meta.uploadedAt}` : '/canopy-logo.png';
