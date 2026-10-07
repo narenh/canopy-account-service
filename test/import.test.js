@@ -89,6 +89,9 @@ test('importing from tickets', async (t) => {
   src.close();
   fs.writeFileSync(path.join(from, 'logo-image'), 'png');
   fs.writeFileSync(path.join(from, 'logo-image.json'), JSON.stringify({ mimeType: 'image/png', uploadedAt: 5 }));
+  // Tickets' link-preview image, a movie still: not for the sign-in page.
+  fs.writeFileSync(path.join(from, 'og-image'), 'jpg');
+  fs.writeFileSync(path.join(from, 'og-image.json'), JSON.stringify({ mimeType: 'image/jpeg', uploadedAt: 6 }));
 
   await t.test('a dry run checks it and writes nothing', () => {
     const r = run(['--from', from, '--dry-run'], { DATA_DIR: to });
@@ -104,6 +107,7 @@ test('importing from tickets', async (t) => {
     assert.match(r.out, /admin: Hana Host <host@example\.com>/);
     assert.equal(fs.readFileSync(path.join(to, 'photos', `${hana.id}.jpg`), 'utf8'), 'jpegbytes');
     assert.ok(fs.existsSync(path.join(to, 'logo-image')));
+    assert.ok(!fs.existsSync(path.join(to, 'backdrop-image')), "tickets' og-image is not the backdrop");
     const again = run(['--from', from], { DATA_DIR: to });
     assert.equal(again.code, 1);
     assert.match(again.out, /already has people/);

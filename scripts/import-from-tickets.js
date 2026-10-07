@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // One-time copy of everyone out of tickets into the account service:
 // people (same ids), their passkeys (every column, unchanged), who the
-// admin is, profile photos, and the sign-in page's logo and backdrop
-// (tickets' link-preview image).
+// admin is, profile photos, and the logo. Not tickets' link-preview
+// image: that's a movie still, and has no place behind the account
+// sign-in page (its backdrop stays empty until one is uploaded in Settings).
 //
 //   node scripts/import-from-tickets.js --from <tickets DATA_DIR copy> [--dry-run]
 //
 // --from is a copy of tickets' data directory (canopy.db, photos/,
-// logo-image, og-image...). --db points at a different database file in
+// logo-image...). --db points at a different database file in
 // it, e.g. one of the consistent daily snapshots in backups/sqlite/.
 //
 // --dry-run imports into a scratch database and folder instead of
@@ -119,9 +120,9 @@ people.forEach((p) => {
   }
 });
 
-// The sign-in page's look: tickets' logo, and its link-preview image as
-// the backdrop (that's what tickets' sign-in page shows behind the card).
-const images = [['logo', 'logo'], ['og', 'backdrop']];
+// Tickets' logo, if it has one uploaded (without one, the pages show the
+// Canopy logo in public/).
+const images = [['logo', 'logo']];
 const imagesCopied = [];
 images.forEach(([fromName, toName]) => {
   const img = path.join(from, `${fromName}-image`);
