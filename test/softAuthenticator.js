@@ -29,10 +29,12 @@ const sha256 = (data) => crypto.createHash('sha256').update(data).digest();
 function createAuthenticator() {
   const creds = []; // { id (Buffer), privateKey, rpId, userHandle, counter }
 
-  function register(options, origin) {
+  // `credId` (base64url) forces the credential id, the way a forged
+  // response could; a real phone always makes a fresh one.
+  function register(options, origin, { credId } = {}) {
     const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const jwk = publicKey.export({ format: 'jwk' });
-    const id = crypto.randomBytes(16);
+    const id = credId ? Buffer.from(credId, 'base64url') : crypto.randomBytes(16);
     const coseKey = cbor(new Map([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(jwk.x, 'base64url')], [-3, Buffer.from(jwk.y, 'base64url')]]));
     const counter = Buffer.alloc(4);
     const idLen = Buffer.from([id.length >> 8, id.length & 0xff]);

@@ -26,6 +26,15 @@ app.set('trust proxy', true);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '200kb' }));
 
+// Express 4 doesn't catch a rejected promise from an async route: it
+// becomes an unhandled rejection, and Node ends the process on one -- so a
+// single request that made a database call throw took the whole service
+// down. Every async route goes through this, which hands the error to
+// Express instead (a 500 for that request, like a synchronous throw).
+function handle(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
 function requireEnvPassword(envVar) {
   let value = process.env[envVar];
   if (!value) {
@@ -173,7 +182,11 @@ function requireSignedIn(req, res, next) {
 
 // ---------------- Cleaning what people type ----------------
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// One @, a dot after it, and none of the characters that mean something
+// in an address list: nodemailer reads "a,b@x.com" as two recipients and
+// "x<me@evil.example>" as me@evil.example, so allowing them would send
+// the code somewhere other than the address it then counts as proven.
+const EMAIL_RE = /^[^\s@,;:<>()[\]\\"]+@[^\s@,;:<>()[\]\\"]+\.[^\s@,;:<>()[\]\\"]+$/;
 function cleanEmail(raw) {
   const email = String(raw || '').trim().toLowerCase().slice(0, 200);
   return EMAIL_RE.test(email) ? email : null;
@@ -226,8 +239,8 @@ app.get('/api/me', attachSession(false), (req, res) => res.json(meView(req)));
 //   across everyone (iCloud Mail allows about 1,000 a day).
 // - Typing a code: each code dies after 5 wrong tries (lib/db.js), plus
 //   10 wrong per email and 40 per address per 15 minutes, and 300 an hour
-//   across everyone. That's at most 40 guesses an hour at any one email,
-//   each a million-to-one.
+//   across everyone. With 5 codes an hour, that's at most 25 guesses an
+//   hour at any one email, each a million-to-one.
 // - The setup password: 8 per browser, 40 per address, 100 an hour overall.
 // - Setup links: 40 wrong per address per 15 minutes. A link's code is
 //   32 random bytes, so this is about noise, not guessing.
@@ -348,7 +361,7 @@ function emailState(email) {
 // Sends a code to the email. After the setup password, the admin's own
 // email (or any, on first run) counts as proven without one -- that
 // password is the stronger proof, and mail may not be set up yet.
-app.post('/api/auth/email/start', attachSession(true), async (req, res) => {
+app.post('/api/auth/email/start', attachSession(true), handle(async (req, res) => {
   if (!accountsOpen(req, res)) return;
   const email = cleanEmail((req.body || {}).email);
   if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
@@ -372,7 +385,7 @@ app.post('/api/auth/email/start', attachSession(true), async (req, res) => {
     return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
   }
   res.json({ verified: false, email });
-});
+}));
 
 app.post('/api/auth/email/verify', attachSession(false), (req, res) => {
   if (!req.sess) return res.status(400).json(EXPIRED);
@@ -398,7 +411,7 @@ function provenEmail(req, res) {
 
 // A new account: its details wait on this session until the passkey
 // exists (register/verify creates both). The photo is uploaded after.
-app.post('/api/auth/register/new', attachSession(false), async (req, res) => {
+app.post('/api/auth/register/new', attachSession(false), handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID || !accountsOpen(req, res)) return;
   const email = provenEmail(req, res);
@@ -415,11 +428,11 @@ app.post('/api/auth/register/new', attachSession(false), async (req, res) => {
     challenge: options.challenge, kind: 'register', profile: { mode: 'new', id, email, ...names, venmo }
   });
   res.json({ options });
-});
+}));
 
 // A new passkey for the account an emailed code just proved: a new phone,
 // or the old one lost.
-app.post('/api/auth/register/existing', attachSession(false), async (req, res) => {
+app.post('/api/auth/register/existing', attachSession(false), handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID || !accountsOpen(req, res)) return;
   const email = provenEmail(req, res);
@@ -434,7 +447,7 @@ app.post('/api/auth/register/existing', attachSession(false), async (req, res) =
     challenge: options.challenge, kind: 'register', personId: person.id, profile: { mode: 'existing', email }
   });
   res.json({ options });
-});
+}));
 
 // Who a setup link is for, so its page can say so. 404 for one that's
 // spent, run out or never existed.
@@ -453,7 +466,7 @@ app.get('/api/setup/:code', (req, res) => {
   if (link) res.json({ firstName: link.person.firstName, expiresAt: link.expiresAt });
 });
 
-app.post('/api/auth/register/link', attachSession(true), async (req, res) => {
+app.post('/api/auth/register/link', attachSession(true), handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   const link = setupLinkFor(req, res, String((req.body || {}).code || ''));
@@ -466,10 +479,10 @@ app.post('/api/auth/register/link', attachSession(true), async (req, res) => {
     challenge: options.challenge, kind: 'register', personId: p.id, profile: { mode: 'link', codeHash: link.codeHash }
   });
   res.json({ options });
-});
+}));
 
 // Another passkey for the signed-in person, from their profile page.
-app.post('/api/auth/register/add', requireSignedIn, async (req, res) => {
+app.post('/api/auth/register/add', requireSignedIn, handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   const p = req.person;
@@ -478,7 +491,7 @@ app.post('/api/auth/register/add', requireSignedIn, async (req, res) => {
   });
   store.setPending(req.sess.idHash, { challenge: options.challenge, kind: 'register', personId: p.id, profile: { mode: 'add' } });
   res.json({ options });
-});
+}));
 
 // A passkey just checked out for personId: sign this browser in, under a
 // new token. On first run (the setup password entered here, no admin yet)
@@ -496,7 +509,7 @@ function finishSignIn(req, res, personId) {
   req.person = store.getPerson(personId);
 }
 
-app.post('/api/auth/register/verify', attachSession(false), async (req, res) => {
+app.post('/api/auth/register/verify', attachSession(false), handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   if (!req.sess) return res.status(400).json(EXPIRED);
@@ -521,6 +534,13 @@ app.post('/api/auth/register/verify', attachSession(false), async (req, res) => 
     deviceType: result.registrationInfo.credentialDeviceType,
     backedUp: result.registrationInfo.credentialBackedUp
   };
+  // A credential id names one passkey, on one account. A real phone makes
+  // a fresh one every time, but the id is whatever the response says, and
+  // a made-up response can reuse one that's saved already (its own, or
+  // someone else's). Refused here, before a setup link is spent on it.
+  if (store.getPasskey(cred.id)) {
+    return res.status(409).json({ error: 'that passkey is already saved', reason: 'passkey_exists' });
+  }
 
   const { mode } = pending.profile;
   let personId = pending.personId;
@@ -550,18 +570,18 @@ app.post('/api/auth/register/verify', attachSession(false), async (req, res) => 
   }
   finishSignIn(req, res, personId);
   res.status(201).json(meView(req));
-});
+}));
 
 // Sign in: no email -- the phone offers whichever passkey it has here.
-app.post('/api/auth/login/options', attachSession(true), async (req, res) => {
+app.post('/api/auth/login/options', attachSession(true), handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID || !accountsOpen(req, res)) return;
   const options = await webauthn.generateAuthenticationOptions({ rpID, userVerification: 'preferred' });
   store.setPending(req.sess.idHash, { challenge: options.challenge, kind: 'login' });
   res.json({ options });
-});
+}));
 
-app.post('/api/auth/login/verify', attachSession(false), async (req, res) => {
+app.post('/api/auth/login/verify', attachSession(false), handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   if (!req.sess) return res.status(400).json(EXPIRED);
@@ -593,7 +613,7 @@ app.post('/api/auth/login/verify', attachSession(false), async (req, res) => {
   store.usePasskey(passkey.id, result.authenticationInfo.newCounter);
   finishSignIn(req, res, passkey.personId);
   res.json(meView(req));
-});
+}));
 
 // ---------------- Signing out ----------------
 //
@@ -934,6 +954,9 @@ mountImageRoutes('logo-image', logoImageStore);
 mountImageRoutes('backdrop-image', backdropImageStore);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+// There's no icon; this keeps every page load from logging a 404 for one.
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // no-cache: a conditional GET every load, so a stale copy can't outlive a
 // deploy in someone's browser.
