@@ -126,3 +126,29 @@ test('importing from tickets', async (t) => {
     }
   });
 });
+
+test('importing on startup (IMPORT_FROM_TICKETS)', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-startup-import-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const from = path.join(root, 'tickets');
+  const to = path.join(root, 'account');
+  fs.mkdirSync(from, { recursive: true });
+  const src = new Database(path.join(from, 'canopy.db'));
+  ticketsSchema(src);
+  const id = crypto.randomUUID();
+  src.prepare(`INSERT INTO people (id, email, first_name, last_name, created_at, updated_at) VALUES (?, 'a@example.com', 'A', 'B', 1, 1)`).run(id);
+  src.prepare("INSERT INTO meta (key, value) VALUES ('admin_person_id', ?)").run(id);
+  src.close();
+
+  const first = await startServer({ DATA_DIR: to, IMPORT_FROM_TICKETS: from });
+  const state = await (await fetch(first.base + '/api/auth/state')).json();
+  first.stop();
+  assert.equal(state.adminExists, true, first.output());
+  assert.match(first.output(), /dry run checked out/);
+  assert.match(first.output(), /import: done/);
+
+  // Booting again with it still set does nothing.
+  const second = await startServer({ DATA_DIR: to, IMPORT_FROM_TICKETS: from });
+  second.stop();
+  assert.match(second.output(), /already has people: nothing to do/);
+});

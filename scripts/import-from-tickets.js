@@ -66,10 +66,16 @@ if (target.prepare('SELECT COUNT(*) AS n FROM people').get().n > 0) {
   fail(`${path.join(targetDir, 'account.db')} already has people in it; this only imports into an empty one`);
 }
 
-const people = source.prepare('SELECT * FROM people ORDER BY created_at').all();
-const passkeys = source.prepare('SELECT * FROM passkeys ORDER BY created_at').all();
-const adminRow = source.prepare("SELECT value FROM meta WHERE key = 'admin_person_id'").get();
-const adminId = adminRow ? adminRow.value : null;
+// One read transaction, so people, passkeys and the admin are a single
+// consistent picture even while tickets is running and writing.
+const { people, passkeys, adminId } = source.transaction(() => {
+  const adminRow = source.prepare("SELECT value FROM meta WHERE key = 'admin_person_id'").get();
+  return {
+    people: source.prepare('SELECT * FROM people ORDER BY created_at').all(),
+    passkeys: source.prepare('SELECT * FROM passkeys ORDER BY created_at').all(),
+    adminId: adminRow ? adminRow.value : null
+  };
+})();
 
 console.log(`import: ${dryRun ? 'DRY RUN into ' + targetDir : 'into ' + targetDir}`);
 console.log(`import: from ${sourceFile} (tickets schema ${sourceVersion}): ${people.length} people, ${passkeys.length} passkeys`);

@@ -4,6 +4,11 @@ const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
 const webauthn = require('@simplewebauthn/server');
+
+// A one-time import from tickets, when asked for (lib/startupImport.js).
+// Before the store opens, so it's the first thing to touch the database.
+if (process.env.IMPORT_FROM_TICKETS) require('./lib/startupImport').importFromTicketsAtStartup(process.env.IMPORT_FROM_TICKETS);
+
 const store = require('./lib/db').init();
 const photoStore = require('./lib/photoStore');
 const { createImageStore } = require('./lib/uploadedImage');

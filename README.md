@@ -600,7 +600,37 @@ don't sign up or set up an admin on the live account service before
 importing. If you already have, stop it, delete `account.db`,
 `account.db-wal` and `account.db-shm` from the volume, and start over.
 
-Step by step. The exact Docker names depend on your Coolify install, so
+### Without a terminal: on startup
+
+Coolify's terminal doesn't always work, so the service can do the import
+itself as it starts (`lib/startupImport.js`):
+
+1. In tickets' **Storages** tab, note the name of its volume (the one at
+   `/app/data`).
+2. In the account service's **Storages** tab, add a volume mount with
+   that same name and a destination of `/tickets-data`. Docker shares a
+   named volume between every container that mounts it, so this is
+   tickets' live data folder, seen from here. The import only reads it.
+3. Add the setting `IMPORT_FROM_TICKETS=/tickets-data` and redeploy.
+4. Read the deploy's logs. Before anything else opens the database, the
+   service runs a dry run, and only if that ends `intact.`, the real run.
+   Every line of both is in the log, ending in `import: done.` or in what
+   went wrong. The service starts either way; a failed import leaves the
+   database empty, to fix and redeploy.
+5. **Remove `IMPORT_FROM_TICKETS` and the `/tickets-data` mount**, and
+   redeploy. Left on, it does nothing (the database has people now, and
+   the log says so), but tickets' data has no business being mounted
+   here.
+
+Reading tickets' live `canopy.db` while tickets runs is fine: SQLite lets
+other processes read while one writes, and the import reads people,
+passkeys and the admin in one read transaction, so it sees a single
+consistent moment. Someone who signs up on tickets after that moment
+won't be in it.
+
+### With a terminal
+
+The exact Docker names depend on your Coolify install, so
 `docker volume ls` and `docker images` are how to find them:
 
 1. **Stop the account service** in Coolify, so nothing has the database
