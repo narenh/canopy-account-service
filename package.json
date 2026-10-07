@@ -1,0 +1,21 @@
+{
+  "name": "canopy-account-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Canopy accounts: who someone is, their name and photo, and whether they're signed in, for every Canopy site",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^14.0.3",
+    "better-sqlite3": "^13.0.3",
+    "express": "^4.22.3",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.10"
+  }
+}
