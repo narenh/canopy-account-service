@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- viewport-fit=cover lets the backdrop draw under the notch and the
+     home indicator instead of iOS letterboxing it. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Canopy</title>
+<link rel="stylesheet" href="/account.css">
+</head>
+<!-- data-return: where to go once signed in. The server already checked
+     it's a Canopy page; empty means the profile. -->
+<body class="centered" data-backdrop="__BACKDROP_URL__" data-return="__RETURN_URL__">
+  <div class="edge-tint top" id="edgeTop" aria-hidden="true"></div>
+  <div class="edge-tint bottom" id="edgeBottom" aria-hidden="true"></div>
+
+  <!-- First run (no admin yet), or ADMIN_RECOVERY: the setup password
+       (ADMIN_PASSWORD) first; whoever then signs in or up here becomes
+       the admin. -->
+  <form class="card hidden" id="adminSetupForm">
+    <!-- LOGO_IMG -->
+    <h2 data-copy="welcome.adminSetupHeading"></h2>
+    <p data-copy="welcome.adminSetupHint"></p>
+    <div class="error" id="adminSetupError"></div>
+    <input type="password" id="adminSetupPassword" placeholder="Setup password" autocomplete="off">
+    <button type="submit" id="adminSetupBtn">Continue</button>
+    <p class="for-email" id="adminSetupBack" style="margin:14px 0 0"><button type="button" class="link-btn" onclick="showCard('emailForm')" data-copy="welcome.back"></button></p>
+  </form>
+
+  <!-- Step 1: sign in with a passkey, or an email to get a code. -->
+  <form class="card" id="emailForm">
+    <!-- LOGO_IMG -->
+    <h1 data-copy="welcome.title"></h1>
+    <p id="tagline" data-copy="welcome.tagline"></p>
+    <div class="error" id="emailError"></div>
+    <button type="button" class="passkey-btn" id="signInBtn">
+      <!-- A key: solid bow with a hole, blade down to the left, two teeth.
+           Solid rather than outlined so it still reads at 20px. -->
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M15.5 2.75a5.75 5.75 0 1 1-3.1 10.6l-1.15 1.15 1.4 1.4a1 1 0 0 1-1.42 1.42l-1.4-1.4-1.1 1.1 1.9 1.9a1 1 0 0 1-1.42 1.42l-1.9-1.9-2.6 2.6a1 1 0 0 1-1.42-1.42l7.3-7.3A5.75 5.75 0 0 1 15.5 2.75zm1.25 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>
+      <span data-copy="welcome.signIn"></span>
+    </button>
+    <div class="or" data-copy="welcome.or"></div>
+    <input type="email" id="email" placeholder="Email" autocomplete="email" autocapitalize="off" spellcheck="false" required>
+    <button type="submit" class="secondary" id="emailBtn" data-copy="welcome.continueEmail"></button>
+    <!-- Only in recovery (ADMIN_RECOVERY=1). -->
+    <p class="small-link hidden" id="adminSetupLink"><button type="button" onclick="showAdminSetup()" data-copy="welcome.adminSetupLink"></button></p>
+  </form>
+
+  <!-- Step 2: the emailed code. -->
+  <form class="card hidden" id="codeForm">
+    <h2 data-copy="welcome.codeHeading"></h2>
+    <p id="codeHint"></p>
+    <div class="error" id="codeError"></div>
+    <div class="notice" id="codeNotice"></div>
+    <!-- one-time-code: iOS offers the code from Mail as a one-tap fill-in. -->
+    <input type="text" class="code" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+    <button type="submit" id="codeBtn">Continue</button>
+    <p class="for-email" style="margin:14px 0 0">
+      <button type="button" class="link-btn" id="resendBtn" data-copy="welcome.resend"></button>
+      &middot; <button type="button" class="link-btn" onclick="backToEmail()">Change email</button>
+    </p>
+  </form>
+
+  <!-- Step 3, for an email with no account: name and photo, all required. -->
+  <form class="card hidden" id="profileForm">
+    <h2 data-copy="welcome.profileHeading"></h2>
+    <p class="for-email"><span class="email-label"></span></p>
+    <label class="photo-pick" id="photoPick">
+      <span class="photo-circle">
+        <img class="hidden" alt="">
+        <svg class="placeholder" viewBox="0 0 64 64" aria-hidden="true">
+          <circle cx="32" cy="24" r="13" fill="#6e6e74"/>
+          <path d="M8 64c0-14 10.7-24 24-24s24 10 24 24z" fill="#6e6e74"/>
+        </svg>
+      </span>
+      <span class="photo-badge" aria-hidden="true">
+        <svg class="icon-add" viewBox="0 0 14 14"><path d="M7 1.5v11M1.5 7h11" stroke="#241c07" stroke-width="2.4" stroke-linecap="round"/></svg>
+        <svg class="icon-edit" viewBox="0 0 14 14"><path d="M2 12l.6-3L9.4 2.2a1.4 1.4 0 0 1 2 0l.4.4a1.4 1.4 0 0 1 0 2L5 11.4z" fill="#241c07"/></svg>
+      </span>
+      <input type="file" accept="image/*" aria-label="Add a profile photo">
+    </label>
+    <div class="name-row">
+      <input type="text" id="firstName" placeholder="First name" autocomplete="given-name" maxlength="60">
+      <input type="text" id="lastName" placeholder="Last name" autocomplete="family-name" maxlength="60">
+    </div>
+    <!-- Optional. The @ is part of the box. -->
+    <label class="venmo-field">
+      <span class="venmo-at" aria-hidden="true">@</span>
+      <input type="text" id="venmoHandle" placeholder="Venmo username (optional)" maxlength="30"
+        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Venmo username (optional)">
+    </label>
+    <div class="error" id="profileError"></div>
+    <button type="submit" id="profileBtn">Sign up</button>
+    <p class="hint" data-copy="welcome.signUpHint"></p>
+  </form>
+
+  <!-- Step 3, for an email that has an account: a passkey on this phone
+       (new phone, lost phone), or the one they have. -->
+  <div class="card hidden" id="existingCard">
+    <h2 id="existingHeading"></h2>
+    <p class="for-email"><span class="email-label"></span></p>
+    <p id="existingHint"></p>
+    <div class="error" id="existingError"></div>
+    <button type="button" class="passkey-btn" id="existingSignInBtn" data-copy="welcome.signIn"></button>
+    <button type="button" class="secondary" id="newPasskeyBtn" style="margin-top:10px" data-copy="welcome.newPasskey"></button>
+  </div>
+
+<script src="/copy.js"></script>
+<script src="/vendor/cropperjs-1.6.3/cropper.min.js"></script>
+<script src="/photo-crop.js"></script>
+<script src="/vendor/simplewebauthn-browser-14.0.0/index.umd.min.js"></script>
+<script src="/account.js"></script>
+<script>
+applyCopy();
+setUpBackdrop();
+
+const RETURN_URL = document.body.getAttribute('data-return');
+let email = '';
+// Having just set up (or recovered) the admin account: on to the admin page.
+let adminFlow = false;
+
+function enter(){
+  window.location.href = adminFlow ? '/admin' : (RETURN_URL || '/profile');
+}
+
+const CARDS = ['adminSetupForm', 'emailForm', 'codeForm', 'profileForm', 'existingCard'];
+function showCard(id){
+  CARDS.forEach(c => document.getElementById(c).classList.toggle('hidden', c !== id));
+  document.querySelectorAll('.email-label').forEach(el => { el.textContent = email; });
+}
+
+function backToEmail(){
+  showCard('emailForm');
+  document.getElementById('email').focus();
+}
+
+// No passkeys in this browser at all (old phones, some in-app browsers):
+// say so up front rather than failing at the last step.
+if (!browserSupportsWebAuthn()){
+  document.getElementById('emailError').textContent = t('welcome.noPasskeys');
+  document.getElementById('signInBtn').disabled = true;
+}
+
+document.getElementById('signInBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('emailError');
+  busy(e.currentTarget, errorEl, async () => { if (await signInWithPasskey(errorEl)) enter(); });
+});
+
+// ---------------- Step 1: email -> a code ----------------
+
+async function sendCode(errorEl){
+  const { res, data } = await postJson('/api/auth/email/start', { email: document.getElementById('email').value });
+  if (data.reason === 'bad_email'){ errorEl.textContent = t('welcome.badEmail'); return null; }
+  if (res.status === 429){ errorEl.textContent = t('welcome.tooMany'); return null; }
+  if (data.reason === 'mail_failed'){ errorEl.textContent = t('welcome.mailFailed'); return null; }
+  if (!res.ok){ errorEl.textContent = t('welcome.failed') + detail(data.error || res.status); return null; }
+  return data;
+}
+
+document.getElementById('emailForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('emailError');
+  busy(document.getElementById('emailBtn'), errorEl, async () => {
+    const data = await sendCode(errorEl);
+    if (!data) return;
+    email = data.email;
+    // After the setup password, the admin's email needs no code.
+    if (data.verified){ afterVerified(data); return; }
+    document.getElementById('codeHint').textContent = t('welcome.codeHint', { email });
+    document.getElementById('codeError').textContent = '';
+    document.getElementById('codeNotice').textContent = '';
+    document.getElementById('code').value = '';
+    showCard('codeForm');
+    document.getElementById('code').focus();
+  });
+});
+
+// ---------------- Step 2: the code ----------------
+
+document.getElementById('codeForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('codeError');
+  document.getElementById('codeNotice').textContent = '';
+  busy(document.getElementById('codeBtn'), errorEl, async () => {
+    const { res, data } = await postJson('/api/auth/email/verify', { code: document.getElementById('code').value });
+    if (res.ok){ afterVerified(data); return; }
+    errorEl.textContent = data.reason === 'wrong_code' ? t('welcome.wrongCode')
+      : data.reason === 'expired' ? t('welcome.codeExpired')
+      : res.status === 429 ? t('welcome.tooMany')
+      : t('welcome.failed');
+  });
+});
+
+// The code fills itself in from Mail on iOS: go as soon as it's all there.
+document.getElementById('code').addEventListener('input', (e) => {
+  const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+  if (v !== e.target.value) e.target.value = v;
+  if (v.length === 6) document.getElementById('codeForm').requestSubmit();
+});
+
+document.getElementById('resendBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('codeError');
+  const notice = document.getElementById('codeNotice');
+  notice.textContent = '';
+  busy(e.currentTarget, errorEl, async () => {
+    if (await sendCode(errorEl)) notice.textContent = t('welcome.resent');
+  });
+});
+
+// ---------------- Step 3: what the email leads to ----------------
+
+function afterVerified(data){
+  if (data.state === 'new'){
+    showCard('profileForm');
+    document.getElementById('firstName').focus();
+    return;
+  }
+  document.getElementById('existingHeading').textContent = t('welcome.welcomeBack', { name: data.firstName });
+  document.getElementById('existingHint').textContent = t(data.hasPasskey ? 'welcome.existingHintHasPasskey' : 'welcome.existingHint');
+  document.getElementById('existingError').textContent = '';
+  document.getElementById('existingSignInBtn').classList.toggle('hidden', !data.hasPasskey);
+  document.getElementById('newPasskeyBtn').classList.toggle('secondary', !!data.hasPasskey);
+  showCard('existingCard');
+}
+
+document.getElementById('existingSignInBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('existingError');
+  busy(e.currentTarget, errorEl, async () => { if (await signInWithPasskey(errorEl)) enter(); });
+});
+
+document.getElementById('newPasskeyBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('existingError');
+  busy(e.currentTarget, errorEl, async () => {
+    const { res, data } = await postJson('/api/auth/register/existing');
+    if (!res.ok){
+      errorEl.textContent = data.reason === 'verify_first' ? t('welcome.expired') : t('welcome.failed') + detail(data.error || res.status);
+      return;
+    }
+    if (await finishRegistration(data.options, errorEl)) enter();
+  });
+});
+
+// ---------------- New account: name + photo, then the passkey ----------------
+
+let photoBlob = null;
+wirePhotoPicker(document.getElementById('photoPick'), document.getElementById('profileError'), (blob) => {
+  photoBlob = blob;
+  const errorEl = document.getElementById('profileError');
+  if (errorEl.textContent === t('welcome.photoRequired')) errorEl.textContent = '';
+});
+
+// Typing or pasting an @ does nothing -- the box already shows one.
+document.getElementById('venmoHandle').addEventListener('input', (e) => {
+  const v = e.target.value.replace(/@/g, '');
+  if (v !== e.target.value) e.target.value = v;
+  const errorEl = document.getElementById('profileError');
+  if (errorEl.textContent === t('welcome.badVenmo')) errorEl.textContent = '';
+});
+
+// Sign up stays tappable; what's missing is said when it's tapped.
+function missingForProfile(){
+  if (!photoBlob) return t('welcome.photoRequired');
+  if (!document.getElementById('firstName').value.trim() || !document.getElementById('lastName').value.trim()){
+    return t('welcome.nameRequired');
+  }
+  return '';
+}
+
+// The account only exists once its passkey does (the server creates both
+// together), so the photo goes up straight after, signed in.
+document.getElementById('profileForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('profileError');
+  errorEl.textContent = missingForProfile();
+  if (errorEl.textContent) return;
+  busy(document.getElementById('profileBtn'), errorEl, async () => {
+    const { res, data } = await postJson('/api/auth/register/new', {
+      firstName: document.getElementById('firstName').value,
+      lastName: document.getElementById('lastName').value,
+      venmoHandle: document.getElementById('venmoHandle').value
+    });
+    if (res.status === 409){ errorEl.textContent = t('welcome.emailTaken'); return; }
+    if (data.reason === 'bad_venmo'){ errorEl.textContent = t('welcome.badVenmo'); return; }
+    if (data.reason === 'verify_first'){ errorEl.textContent = t('welcome.expired'); return; }
+    if (!res.ok){ errorEl.textContent = t('welcome.failed') + detail(data.error || res.status); return; }
+    if (!(await finishRegistration(data.options, errorEl))) return;
+    const form = new FormData();
+    form.append('photo', photoBlob, 'photo.jpg');
+    await fetch('/api/profile/photo', { method: 'POST', body: form }).catch(() => {});
+    enter();
+  });
+});
+
+// ---------------- First run: the setup password ----------------
+// With no admin (a brand-new install) the page is only this: no account
+// can exist before the admin's, and the server refuses everything else
+// until it's done. In recovery it's the small "Admin setup" link under
+// sign-in. Once it's right, the usual sign-up / sign-in follows here.
+
+function showAdminSetup(){
+  showCard('adminSetupForm');
+  document.getElementById('adminSetupPassword').focus();
+}
+
+function adminSetupDone(){
+  adminFlow = true;
+  document.getElementById('adminSetupLink').classList.add('hidden');
+  document.getElementById('tagline').textContent = t('welcome.taglineAdmin');
+  showCard('emailForm');
+}
+
+(async function checkAdminSetup(){
+  try{
+    const st = await (await fetch('/api/auth/state')).json();
+    if (!st.adminSetup) return;
+    if (st.adminSetupGranted){ adminSetupDone(); return; }
+    if (st.adminExists){
+      document.getElementById('adminSetupLink').classList.remove('hidden');
+      return;
+    }
+    // Nothing to go back to.
+    document.getElementById('adminSetupBack').classList.add('hidden');
+    showAdminSetup();
+  }catch(e){}
+})();
+
+document.getElementById('adminSetupForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('adminSetupError');
+  busy(document.getElementById('adminSetupBtn'), errorEl, async () => {
+    const { res } = await postJson('/api/auth/admin-setup', { password: document.getElementById('adminSetupPassword').value });
+    if (!res.ok){
+      errorEl.textContent = res.status === 403 ? t('welcome.wrongSetupPassword')
+        : res.status === 429 ? t('welcome.tooMany') : t('welcome.failed');
+      return;
+    }
+    adminSetupDone();
+  });
+});
+</script>
+</body>
+</html>

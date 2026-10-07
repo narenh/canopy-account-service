@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Canopy Accounts</title>
+<link rel="stylesheet" href="/account.css">
+<style>
+  /* Always a scrollbar's room, so switching tabs doesn't shift the page
+     sideways on desktop (tickets' fix). */
+  html{overflow-y:scroll;}
+  .wrap{max-width:640px;margin:0 auto;padding-bottom:40px;}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  header h1{margin:0;text-align:left;}
+  header a{color:var(--gold);font-size:13px;font-weight:600;text-decoration:none;}
+  .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+  .tabs button{
+    width:auto;background:none;color:var(--muted);border-radius:0;padding:10px 12px;font-size:14px;
+    border-bottom:2px solid transparent;margin-bottom:-1px;
+  }
+  .tabs button.active{color:#fff;border-bottom-color:var(--gold);}
+  .panel > p{text-align:left;}
+  .row{
+    display:flex;align-items:center;gap:12px;padding:12px;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;
+  }
+  .avatar{width:40px;height:40px;border-radius:50%;background:#26262a;object-fit:cover;flex:0 0 auto;}
+  .who{flex:1;min-width:0;}
+  .who .name{font-size:14px;font-weight:600;}
+  .who .sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tag{font-size:10px;font-weight:700;text-transform:uppercase;color:#241c07;background:var(--gold);border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:2px;}
+  .tag.off{background:#3a3a3a;color:#ccc;}
+  .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+  .actions button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
+  .inline-form{display:flex;gap:8px;margin-bottom:14px;}
+  .inline-form input{margin:0;}
+  .inline-form button{width:auto;white-space:nowrap;}
+  .sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;}
+  .sheet-bg .card{max-width:420px;}
+  .secret{
+    font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all;background:#0f0f10;
+    border:1px solid #3a3a3a;border-radius:10px;padding:12px;margin-bottom:12px;user-select:all;
+  }
+  .sheet-buttons{display:flex;gap:8px;}
+  .image-setting{margin-bottom:20px;}
+  .image-setting img{max-width:100%;max-height:120px;border-radius:8px;border:1px solid var(--line);display:block;margin:8px 0;}
+  .image-setting p{text-align:left;margin-bottom:8px;}
+  .image-setting label.upload{display:inline-block;width:auto;}
+  .image-setting input[type=file]{display:none;}
+  @media (max-width:520px){
+    .row{flex-wrap:wrap;}
+    .actions{width:100%;justify-content:flex-start;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 data-copy="admin.heading"></h1>
+    <a href="/profile">Your account</a>
+  </header>
+  <div class="tabs">
+    <button type="button" data-tab="people" data-copy="admin.peopleTab"></button>
+    <button type="button" data-tab="sites" data-copy="admin.sitesTab"></button>
+    <button type="button" data-tab="settings" data-copy="admin.settingsTab"></button>
+  </div>
+  <div class="error" id="pageError"></div>
+
+  <section class="panel" id="people">
+    <p data-copy="admin.peopleHint"></p>
+    <div id="peopleList"></div>
+  </section>
+
+  <section class="panel hidden" id="sites">
+    <p data-copy="admin.sitesHint"></p>
+    <form class="inline-form" id="addSiteForm">
+      <input type="text" id="siteName" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button type="submit" id="addSiteBtn" data-copy="admin.addSite"></button>
+    </form>
+    <div id="siteList"></div>
+  </section>
+
+  <section class="panel hidden" id="settings">
+    <div class="image-setting" data-image="logo-image">
+      <h3 data-copy="admin.logoHeading"></h3>
+      <p data-copy="admin.logoHint"></p>
+      <img class="hidden" alt="">
+      <label class="upload"><button type="button" class="secondary" style="width:auto" data-copy="admin.upload"></button><input type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+    </div>
+    <div class="image-setting" data-image="backdrop-image">
+      <h3 data-copy="admin.backdropHeading"></h3>
+      <p data-copy="admin.backdropHint"></p>
+      <img class="hidden" alt="">
+      <label class="upload"><button type="button" class="secondary" style="width:auto" data-copy="admin.upload"></button><input type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+    </div>
+  </section>
+</div>
+
+<!-- A secret shown once: a setup link or a site key. -->
+<div class="sheet-bg hidden" id="sheet">
+  <div class="card">
+    <h2 id="sheetHeading"></h2>
+    <p id="sheetHint"></p>
+    <div class="secret" id="sheetSecret"></div>
+    <div class="sheet-buttons">
+      <button type="button" id="copyBtn" data-copy="admin.copy"></button>
+      <button type="button" class="secondary" onclick="closeSheet()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="/copy.js"></script>
+<script src="/account.js"></script>
+<script>
+applyCopy();
+document.getElementById('siteName').placeholder = t('admin.siteName');
+
+// ---------------- Tabs (in the URL hash, so reload keeps the tab) ----------------
+const TABS = ['people', 'sites', 'settings'];
+function showTab(name){
+  if (!TABS.includes(name)) name = 'people';
+  TABS.forEach(tab => document.getElementById(tab).classList.toggle('hidden', tab !== name));
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+  if (name === 'people') loadPeople();
+  if (name === 'sites') loadSites();
+  if (name === 'settings') loadImages();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+async function api(method, url, body){
+  const { res, data } = await sendJson(method, url, body);
+  if (res.status === 401){ window.location.href = '/'; throw new Error('signed out'); }
+  if (!res.ok) throw new Error(data.error || String(res.status));
+  return data;
+}
+
+function fail(err){
+  document.getElementById('pageError').textContent = t('admin.failed') + detail(err && err.message);
+}
+
+// ---------------- The once-only sheet ----------------
+function openSheet(heading, hint, secret){
+  document.getElementById('sheetHeading').textContent = heading;
+  document.getElementById('sheetHint').textContent = hint;
+  document.getElementById('sheetSecret').textContent = secret;
+  document.getElementById('copyBtn').textContent = t('admin.copy');
+  document.getElementById('sheet').classList.remove('hidden');
+}
+function closeSheet(){
+  document.getElementById('sheet').classList.add('hidden');
+  document.getElementById('sheetSecret').textContent = '';
+}
+// A tap outside the card closes it too.
+document.getElementById('sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  try{
+    await navigator.clipboard.writeText(document.getElementById('sheetSecret').textContent);
+    document.getElementById('copyBtn').textContent = t('admin.copied');
+  }catch(e){}
+});
+
+function button(label, cls, onClick){
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.textContent = label;
+  b.addEventListener('click', () => onClick(b));
+  return b;
+}
+
+// ---------------- People ----------------
+async function loadPeople(){
+  document.getElementById('pageError').textContent = '';
+  let data;
+  try{ data = await api('GET', '/api/admin/people'); }catch(e){ fail(e); return; }
+  const list = document.getElementById('peopleList');
+  list.innerHTML = '';
+  data.people.forEach((p) => {
+    const isAdmin = p.id === data.adminPersonId;
+    const full = p.firstName + ' ' + p.lastName;
+    const row = document.createElement('div');
+    row.className = 'row';
+    const img = document.createElement('img');
+    img.className = 'avatar';
+    img.alt = '';
+    if (p.photoUrl) img.src = p.photoUrl;
+    const who = document.createElement('div');
+    who.className = 'who';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = full;
+    if (isAdmin){
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = t('admin.adminTag');
+      name.appendChild(tag);
+    }
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = p.email + ' · ' + (p.passkeyCount === 0 ? t('admin.noPasskey')
+      : p.passkeyCount === 1 ? t('admin.passkeysOne') : t('admin.passkeysMany', { count: p.passkeyCount }));
+    who.append(name, sub);
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.appendChild(button(t('admin.rename'), 'secondary', () => rename(p)));
+    actions.appendChild(button(t('admin.setupLink'), 'secondary', (b) => setupLink(p, b, false)));
+    // Your own reset or delete would lock you out (see server.js).
+    if (!isAdmin){
+      actions.appendChild(button(t('admin.resetPasskeys'), 'secondary', (b) => setupLink(p, b, true)));
+      actions.appendChild(button('Delete', 'danger', (b) => remove(p, b)));
+    }
+    row.append(img, who, actions);
+    list.appendChild(row);
+  });
+}
+
+async function rename(p){
+  const first = prompt('First name', p.firstName);
+  if (first === null) return;
+  const last = prompt('Last name', p.lastName);
+  if (last === null) return;
+  try{ await api('PATCH', '/api/admin/people/' + p.id, { firstName: first, lastName: last }); }catch(e){ fail(e); }
+  loadPeople();
+}
+
+async function setupLink(p, btn, reset){
+  const full = p.firstName + ' ' + p.lastName;
+  if (reset && !confirm(t('admin.resetConfirm', { name: full }))) return;
+  btn.disabled = true;
+  try{
+    const data = await api('POST', '/api/admin/people/' + p.id + (reset ? '/reset-passkeys' : '/setup-link'));
+    openSheet(t('admin.linkHeading', { name: full }), t('admin.linkHint'), data.setupUrl);
+  }catch(e){ fail(e); }
+  btn.disabled = false;
+  if (reset) loadPeople();
+}
+
+async function remove(p, btn){
+  if (!confirm(t('admin.deleteConfirm', { name: p.firstName + ' ' + p.lastName }))) return;
+  btn.disabled = true;
+  try{ await api('DELETE', '/api/admin/people/' + p.id); }catch(e){ fail(e); }
+  loadPeople();
+}
+
+// ---------------- Sites ----------------
+async function loadSites(){
+  document.getElementById('pageError').textContent = '';
+  let data;
+  try{ data = await api('GET', '/api/admin/apps'); }catch(e){ fail(e); return; }
+  const list = document.getElementById('siteList');
+  list.innerHTML = '';
+  data.apps.forEach((a) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const who = document.createElement('div');
+    who.className = 'who';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = a.name;
+    if (a.revokedAt){
+      const tag = document.createElement('span');
+      tag.className = 'tag off';
+      tag.textContent = t('admin.revoked');
+      name.appendChild(tag);
+    }
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = a.lastUsedAt ? t('admin.lastUsed', { date: formatDate(a.lastUsedAt) }) : t('admin.neverUsed');
+    who.append(name, sub);
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.appendChild(button(t('admin.rekey'), 'secondary', async (b) => {
+      if (!confirm(t('admin.rekeyConfirm', { name: a.name }))) return;
+      b.disabled = true;
+      try{
+        const r = await api('POST', '/api/admin/apps/' + a.id + '/rekey');
+        openSheet(t('admin.keyHeading', { name: a.name }), t('admin.keyHint'), r.key);
+      }catch(e){ fail(e); }
+      loadSites();
+    }));
+    if (!a.revokedAt){
+      actions.appendChild(button(t('admin.revoke'), 'danger', async (b) => {
+        if (!confirm(t('admin.revokeConfirm', { name: a.name }))) return;
+        b.disabled = true;
+        try{ await api('POST', '/api/admin/apps/' + a.id + '/revoke'); }catch(e){ fail(e); }
+        loadSites();
+      }));
+    }
+    row.append(who, actions);
+    list.appendChild(row);
+  });
+}
+
+document.getElementById('addSiteForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('siteName');
+  const btn = document.getElementById('addSiteBtn');
+  btn.disabled = true;
+  try{
+    const r = await api('POST', '/api/admin/apps', { name: input.value });
+    input.value = '';
+    openSheet(t('admin.keyHeading', { name: r.app.name }), t('admin.keyHint'), r.key);
+  }catch(err){ fail(err); }
+  btn.disabled = false;
+  loadSites();
+});
+
+// ---------------- Settings: logo and backdrop ----------------
+function loadImages(){
+  document.querySelectorAll('.image-setting').forEach(async (box) => {
+    const img = box.querySelector('img');
+    try{
+      const data = await api('GET', '/api/admin/' + box.dataset.image);
+      img.classList.toggle('hidden', !data.url);
+      if (data.url) img.src = data.url;
+    }catch(e){ fail(e); }
+  });
+}
+
+document.querySelectorAll('.image-setting').forEach((box) => {
+  const input = box.querySelector('input[type=file]');
+  box.querySelector('button').addEventListener('click', () => input.click());
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('image', file);
+    try{
+      const res = await fetch('/api/admin/' + box.dataset.image, { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || String(res.status));
+    }catch(e){ fail(e); }
+    input.value = '';
+    loadImages();
+  });
+});
+
+showTab(location.hash.slice(1));
+</script>
+</body>
+</html>

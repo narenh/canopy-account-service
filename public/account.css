@@ -1,0 +1,255 @@
+/* Shared by every account page. Inlined into each page by server.js
+   (INLINE_STYLES), for the same reason its scripts are. Carried over from
+   tickets' sign-in page. */
+:root{
+  --gold:#c9a24b;
+  --bg:#0b0b0d;
+  --card:#151517;
+  --line:#2a2a2a;
+  --muted:#9a9a9a;
+  --danger:#e2857a;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  min-height:100vh;
+  background:var(--bg);
+  color:#fff;
+  font-family:-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  padding:20px;
+}
+body.centered{display:flex;align-items:center;justify-content:center;}
+.hidden{display:none !important;}
+.card{
+  width:100%;
+  max-width:340px;
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:28px 24px;
+}
+.site-logo{
+  display:block;
+  max-height:56px;
+  max-width:100%;
+  width:auto;
+  height:auto;
+  margin:0 auto 14px;
+}
+/* With a logo, the name in it is enough. */
+.site-logo ~ h1{display:none;}
+h1{font-size:20px;margin:0 0 6px;text-align:center;}
+h2{font-size:19px;margin:0 0 4px;text-align:center;}
+p{
+  margin:0 0 20px;
+  color:var(--muted);
+  font-size:13px;
+  text-align:center;
+  line-height:1.4;
+}
+.for-email{margin-bottom:18px;}
+.link-btn{
+  width:auto;
+  background:none;
+  color:var(--gold);
+  padding:0;
+  font-size:13px;
+  font-weight:600;
+  border:none;
+  cursor:pointer;
+}
+/* 16px: iOS Safari zooms the page in when a smaller control takes focus. */
+input[type="email"], input[type="text"], input[type="password"]{
+  width:100%;
+  background:#0f0f10;
+  color:#fff;
+  border:1px solid #3a3a3a;
+  border-radius:10px;
+  padding:12px 14px;
+  font-size:16px;
+  margin-bottom:12px;
+}
+input.code{font-size:22px;letter-spacing:6px;text-align:center;font-variant-numeric:tabular-nums;}
+.name-row{display:flex;gap:10px;}
+.name-row input{min-width:0;}
+/* Lined up on the text baseline, so the @ (which hangs below the line)
+   sits level with the name. */
+.venmo-field{
+  display:flex;
+  align-items:baseline;
+  background:#0f0f10;
+  border:1px solid #3a3a3a;
+  border-radius:10px;
+  padding:0 14px;
+  margin-bottom:12px;
+  cursor:text;
+}
+.venmo-at{color:var(--muted);font-size:16px;flex:0 0 auto;}
+.venmo-field input[type="text"]{
+  border:none;
+  background:none;
+  padding:12px 0 12px 2px;
+  margin:0;
+  outline:none;
+  flex:1;
+  min-width:0;
+}
+button{
+  width:100%;
+  background:var(--gold);
+  color:#241c07;
+  border:none;
+  border-radius:12px;
+  padding:12px;
+  font-size:15px;
+  font-weight:700;
+  cursor:pointer;
+  font-family:inherit;
+}
+button:disabled{opacity:.5;cursor:not-allowed;}
+button.secondary{
+  background:#1e1e21;
+  color:#fff;
+  border:1px solid #3a3a3a;
+}
+button.danger{background:none;color:var(--danger);border:1px solid rgba(226,133,122,.4);}
+.passkey-btn{display:flex;align-items:center;justify-content:center;gap:8px;}
+.passkey-btn svg{width:20px;height:20px;flex:0 0 auto;}
+.or{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  color:var(--muted);
+  font-size:12px;
+  margin:18px 0 14px;
+}
+.or::before, .or::after{content:"";flex:1;height:1px;background:rgba(255,255,255,.14);}
+.hint{font-size:12px;margin:12px 0 0;}
+.small-link{margin:16px 0 0;}
+.small-link button{
+  width:auto;
+  background:none;
+  color:var(--muted);
+  padding:0;
+  font-size:12px;
+  font-weight:600;
+  text-decoration:underline;
+}
+.error{
+  color:var(--danger);
+  font-size:13px;
+  min-height:18px;
+  margin-bottom:6px;
+  text-align:center;
+}
+.notice{color:#9fd39a;font-size:13px;min-height:18px;margin-bottom:6px;text-align:center;}
+
+/* The photo, like a phone's contact photo: a silhouette in a circle with
+   a "+" badge until there's a photo, then the photo with a pencil badge.
+   The whole thing, badge included, is the tap target. */
+.photo-pick{
+  position:relative;
+  display:block;
+  width:112px;
+  height:112px;
+  margin:0 auto 18px;
+  cursor:pointer;
+}
+.photo-circle{
+  width:100%;
+  height:100%;
+  border-radius:50%;
+  overflow:hidden;
+  background:#26262a;
+  border:1px solid rgba(255,255,255,.12);
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+}
+.photo-pick.has-photo .photo-circle{border:2px solid var(--gold);}
+.photo-circle img{width:100%;height:100%;object-fit:cover;display:block;}
+.photo-circle svg{width:96%;height:96%;display:block;}
+.photo-badge{
+  position:absolute;
+  right:2px;
+  bottom:2px;
+  width:32px;
+  height:32px;
+  border-radius:50%;
+  background:var(--gold);
+  border:3px solid var(--card);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.photo-badge svg{width:14px;height:14px;display:block;}
+.photo-badge .icon-edit{display:none;}
+.photo-pick.has-photo .photo-badge .icon-add{display:none;}
+.photo-pick.has-photo .photo-badge .icon-edit{display:block;}
+.photo-pick input{position:absolute;inset:0;opacity:0;cursor:pointer;}
+
+/* The backdrop image fills the screen behind a frosted-glass card. cover
+   on a fixed layer fills a portrait phone and crops the sides; the dim
+   keeps the card readable. 100lvh: the height with Safari's toolbars
+   collapsed, so the image reaches the bottom edge behind a translucent
+   toolbar. The page colour moves to html, so body doesn't paint a solid
+   box over the backdrop (z-index -1). */
+html.has-backdrop{background:var(--bg);}
+html.has-backdrop body{background:transparent;}
+body.has-backdrop::before{
+  content:"";
+  position:fixed;
+  top:0;
+  left:0;
+  right:0;
+  height:100lvh;
+  z-index:-1;
+  background:var(--backdrop) center / cover no-repeat, var(--bg);
+}
+body.has-backdrop::after{
+  content:"";
+  position:fixed;
+  top:0;
+  left:0;
+  right:0;
+  height:100lvh;
+  z-index:-1;
+  background:rgba(0,0,0,0.25);
+}
+/* iOS Safari 26 paints the strips behind its status bar and toolbar a
+   single solid colour it picks from a fixed bar touching that edge. These
+   give it the average colour of the image's edge (account.js) to pick. */
+.edge-tint{
+  position:fixed;
+  left:0;
+  right:0;
+  height:40px;
+  z-index:0;
+  pointer-events:none;
+  background-color:transparent;
+}
+.edge-tint.top{
+  top:0;
+  -webkit-mask-image:linear-gradient(to bottom, #000, transparent);
+  mask-image:linear-gradient(to bottom, #000, transparent);
+}
+.edge-tint.bottom{
+  bottom:0;
+  -webkit-mask-image:linear-gradient(to top, #000, transparent);
+  mask-image:linear-gradient(to top, #000, transparent);
+}
+body.has-backdrop .card{
+  background:rgba(21,21,23,0.45);
+  border-color:rgba(255,255,255,0.14);
+  -webkit-backdrop-filter:blur(20px) saturate(140%);
+  backdrop-filter:blur(20px) saturate(140%);
+  box-shadow:0 10px 40px rgba(0,0,0,0.35);
+}
+body.has-backdrop p{color:#d0d0d0;}
+body.has-backdrop input[type="email"], body.has-backdrop input[type="text"], body.has-backdrop input[type="password"],
+body.has-backdrop .venmo-field{
+  background:rgba(0,0,0,0.35);
+  border-color:rgba(255,255,255,0.18);
+}
+body.has-backdrop .venmo-field input[type="text"]{background:none;}
+body.has-backdrop .photo-badge{border-color:#2a2a2d;}

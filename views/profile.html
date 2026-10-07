@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Your Account · Canopy</title>
+<link rel="stylesheet" href="/account.css">
+<style>
+  .stack{max-width:400px;margin:0 auto;display:flex;flex-direction:column;gap:16px;padding-bottom:40px;}
+  .stack .card{max-width:none;}
+  h3{font-size:15px;margin:0 0 4px;}
+  .card > p.left{text-align:left;}
+  .passkey{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:12px 0;
+    border-top:1px solid var(--line);
+  }
+  .passkey:first-child{border-top:none;}
+  .passkey svg{width:20px;height:20px;flex:0 0 auto;color:var(--gold);}
+  .passkey .what{flex:1;min-width:0;font-size:13px;line-height:1.35;}
+  .passkey .what span{color:var(--muted);display:block;font-size:12px;}
+  .passkey button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
+  .email-line{color:var(--muted);font-size:13px;text-align:center;margin:0 0 16px;}
+  .top-links{display:flex;justify-content:space-between;align-items:center;max-width:400px;margin:0 auto 12px;}
+  .top-links a{color:var(--gold);font-size:13px;font-weight:600;text-decoration:none;}
+</style>
+</head>
+<body>
+  <div class="top-links">
+    <span></span>
+    <a href="/admin" id="adminLink" class="hidden" data-copy="profile.admin"></a>
+  </div>
+  <div class="stack">
+    <form class="card" id="profileForm">
+      <h2 data-copy="profile.heading"></h2>
+      <p class="email-line" id="emailLine"></p>
+      <label class="photo-pick" id="photoPick">
+        <span class="photo-circle">
+          <img class="hidden" alt="">
+          <svg class="placeholder" viewBox="0 0 64 64" aria-hidden="true">
+            <circle cx="32" cy="24" r="13" fill="#6e6e74"/>
+            <path d="M8 64c0-14 10.7-24 24-24s24 10 24 24z" fill="#6e6e74"/>
+          </svg>
+        </span>
+        <span class="photo-badge" aria-hidden="true">
+          <svg class="icon-add" viewBox="0 0 14 14"><path d="M7 1.5v11M1.5 7h11" stroke="#241c07" stroke-width="2.4" stroke-linecap="round"/></svg>
+          <svg class="icon-edit" viewBox="0 0 14 14"><path d="M2 12l.6-3L9.4 2.2a1.4 1.4 0 0 1 2 0l.4.4a1.4 1.4 0 0 1 0 2L5 11.4z" fill="#241c07"/></svg>
+        </span>
+        <input type="file" accept="image/*" aria-label="Change your photo">
+      </label>
+      <div class="name-row">
+        <input type="text" id="firstName" placeholder="First name" autocomplete="given-name" maxlength="60">
+        <input type="text" id="lastName" placeholder="Last name" autocomplete="family-name" maxlength="60">
+      </div>
+      <label class="venmo-field">
+        <span class="venmo-at" aria-hidden="true">@</span>
+        <input type="text" id="venmoHandle" placeholder="Venmo username (optional)" maxlength="30"
+          autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Venmo username (optional)">
+      </label>
+      <div class="error" id="profileError"></div>
+      <div class="notice" id="profileNotice"></div>
+      <button type="submit" id="saveBtn">Save</button>
+    </form>
+
+    <div class="card">
+      <h3 data-copy="profile.passkeysHeading"></h3>
+      <p class="left" data-copy="profile.passkeysHint" style="margin-bottom:8px"></p>
+      <div id="passkeyList"></div>
+      <div class="error" id="passkeyError"></div>
+      <div class="notice" id="passkeyNotice"></div>
+      <button type="button" class="secondary passkey-btn" id="addPasskeyBtn" data-copy="profile.addPasskey"></button>
+    </div>
+
+    <div class="card">
+      <p data-copy="profile.signOutHint" style="margin-bottom:12px"></p>
+      <button type="button" class="danger" id="signOutBtn" data-copy="profile.signOut"></button>
+    </div>
+  </div>
+
+<script src="/copy.js"></script>
+<script src="/vendor/cropperjs-1.6.3/cropper.min.js"></script>
+<script src="/photo-crop.js"></script>
+<script src="/vendor/simplewebauthn-browser-14.0.0/index.umd.min.js"></script>
+<script src="/account.js"></script>
+<script>
+applyCopy();
+
+const KEY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M15.5 2.75a5.75 5.75 0 1 1-3.1 10.6l-1.15 1.15 1.4 1.4a1 1 0 0 1-1.42 1.42l-1.4-1.4-1.1 1.1 1.9 1.9a1 1 0 0 1-1.42 1.42l-1.9-1.9-2.6 2.6a1 1 0 0 1-1.42-1.42l7.3-7.3A5.75 5.75 0 0 1 15.5 2.75zm1.25 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>';
+
+function signedOut(res){
+  if (res.status === 401){ window.location.href = '/'; return true; }
+  return false;
+}
+
+function fill(person){
+  document.getElementById('emailLine').textContent = person.email;
+  document.getElementById('firstName').value = person.firstName;
+  document.getElementById('lastName').value = person.lastName;
+  document.getElementById('venmoHandle').value = person.venmo || '';
+  document.getElementById('adminLink').classList.toggle('hidden', !person.isAdmin);
+  if (person.photoUrl) picker.show(person.photoUrl);
+}
+
+// A new photo goes up as soon as it's framed.
+const picker = wirePhotoPicker(document.getElementById('photoPick'), document.getElementById('profileError'), async (blob) => {
+  const errorEl = document.getElementById('profileError');
+  const notice = document.getElementById('profileNotice');
+  notice.textContent = '';
+  try{
+    const form = new FormData();
+    form.append('photo', blob, 'photo.jpg');
+    const res = await fetch('/api/profile/photo', { method: 'POST', body: form });
+    if (signedOut(res)) return;
+    if (!res.ok){ errorEl.textContent = t('profile.failed'); return; }
+    notice.textContent = t('profile.saved');
+  }catch(err){
+    errorEl.textContent = t('welcome.unreachable');
+  }
+});
+
+document.getElementById('venmoHandle').addEventListener('input', (e) => {
+  const v = e.target.value.replace(/@/g, '');
+  if (v !== e.target.value) e.target.value = v;
+});
+
+document.getElementById('profileForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('profileError');
+  const notice = document.getElementById('profileNotice');
+  notice.textContent = '';
+  busy(document.getElementById('saveBtn'), errorEl, async () => {
+    const { res, data } = await sendJson('PATCH', '/api/profile', {
+      firstName: document.getElementById('firstName').value,
+      lastName: document.getElementById('lastName').value,
+      venmoHandle: document.getElementById('venmoHandle').value
+    });
+    if (signedOut(res)) return;
+    if (data.reason === 'bad_venmo'){ errorEl.textContent = t('welcome.badVenmo'); return; }
+    if (!res.ok){ errorEl.textContent = data.error === 'first and last name are both required' ? t('welcome.nameRequired') : t('profile.failed'); return; }
+    fill(data.person);
+    notice.textContent = t('profile.saved');
+  });
+});
+
+// ---------------- Passkeys ----------------
+
+async function loadPasskeys(){
+  const res = await fetch('/api/profile/passkeys');
+  if (signedOut(res)) return;
+  const { passkeys } = await res.json();
+  const list = document.getElementById('passkeyList');
+  list.innerHTML = '';
+  passkeys.forEach((k) => {
+    const row = document.createElement('div');
+    row.className = 'passkey';
+    row.innerHTML = KEY_ICON + '<div class="what"></div>';
+    const what = row.querySelector('.what');
+    what.textContent = t('profile.passkeyAdded', { date: formatDate(k.createdAt) });
+    const sub = document.createElement('span');
+    sub.textContent = [
+      k.lastUsedAt ? t('profile.passkeyUsed', { date: formatDate(k.lastUsedAt) }) : t('profile.passkeyNeverUsed'),
+      t(k.synced ? 'profile.passkeySynced' : 'profile.passkeyDeviceOnly')
+    ].join(' · ');
+    what.appendChild(sub);
+    if (passkeys.length > 1){
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'danger';
+      btn.textContent = 'Remove';
+      btn.addEventListener('click', () => removePasskey(k.id, btn));
+      row.appendChild(btn);
+    }
+    list.appendChild(row);
+  });
+}
+
+function removePasskey(id, btn){
+  if (!confirm(t('profile.removeConfirm'))) return;
+  const errorEl = document.getElementById('passkeyError');
+  document.getElementById('passkeyNotice').textContent = '';
+  busy(btn, errorEl, async () => {
+    const { res, data } = await sendJson('DELETE', '/api/profile/passkeys/' + encodeURIComponent(id));
+    if (signedOut(res)) return;
+    if (data.reason === 'last_passkey'){ errorEl.textContent = t('profile.lastPasskey'); return; }
+    if (!res.ok){ errorEl.textContent = t('profile.failed'); return; }
+    loadPasskeys();
+  });
+}
+
+document.getElementById('addPasskeyBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('passkeyError');
+  const notice = document.getElementById('passkeyNotice');
+  notice.textContent = '';
+  busy(e.currentTarget, errorEl, async () => {
+    const { res, data } = await postJson('/api/auth/register/add');
+    if (signedOut(res)) return;
+    if (!res.ok){ errorEl.textContent = t('welcome.failed') + detail(data.error || res.status); return; }
+    if (await finishRegistration(data.options, errorEl)){
+      notice.textContent = t('profile.added');
+      loadPasskeys();
+    }
+  });
+});
+
+document.getElementById('signOutBtn').addEventListener('click', (e) => {
+  busy(e.currentTarget, null, async () => {
+    await postJson('/api/signout');
+    window.location.href = '/';
+  });
+});
+
+(async function load(){
+  const res = await fetch('/api/me');
+  const { person } = await res.json();
+  if (!person){ window.location.href = '/'; return; }
+  fill(person);
+  loadPasskeys();
+})();
+</script>
+</body>
+</html>
