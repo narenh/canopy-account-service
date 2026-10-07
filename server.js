@@ -103,6 +103,33 @@ app.use((req, res, next) => {
   res.status(403).json({ error: 'requests that change something must come from a Canopy page', reason: 'bad_origin' });
 });
 
+// ---------------- Passkey sign-in from other Canopy pages ----------------
+//
+// A Canopy site can run "Sign in with passkey" on its own page (tickets
+// does) rather than sending people here: its page calls these two
+// endpoints directly, with credentials, and the session cookie that comes
+// back is the same one this page would set. The browser only allows that
+// with CORS, which is given to Canopy pages (lib/domain.js) and nobody
+// else, and only for these two. The passkey itself is checked against the
+// page it was used on (ceremonyOrigin), which may be any Canopy page.
+// Everything else -- email codes, sign-up, the profile -- stays here.
+const CROSS_SITE_SIGN_IN = ['/api/auth/login/options', '/api/auth/login/verify'];
+
+app.use(CROSS_SITE_SIGN_IN, (req, res, next) => {
+  const origin = req.get('origin');
+  res.vary('Origin');
+  if (origin && isCanopyOrigin(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Access-Control-Allow-Credentials', 'true');
+  }
+  if (req.method !== 'OPTIONS') return next();
+  if (!isCanopyOrigin(origin)) return res.status(403).end();
+  res.set('Access-Control-Allow-Methods', 'POST');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '600');
+  res.status(204).end();
+});
+
 // ---------------- Sessions ----------------
 
 // Finds this browser's session (from its cookie), making one if `create`

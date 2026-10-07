@@ -78,3 +78,40 @@ test('hardening', async (t) => {
     assert.equal(r.status, 204);
   });
 });
+
+test('passkey sign-in from another Canopy page (CORS)', async (t) => {
+  const { startServer, browser } = require('./harness');
+  const server = await startServer();
+  t.after(() => server.stop());
+  const tix = 'https://tix.canopysf.com';
+
+  const pre = await fetch(server.base + '/api/auth/login/options', {
+    method: 'OPTIONS', headers: { Origin: tix, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' }
+  });
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get('access-control-allow-origin'), tix);
+  assert.equal(pre.headers.get('access-control-allow-credentials'), 'true');
+
+  const evil = await fetch(server.base + '/api/auth/login/options', {
+    method: 'OPTIONS', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' }
+  });
+  assert.equal(evil.status, 403);
+  assert.equal(evil.headers.get('access-control-allow-origin'), null);
+
+  // Only sign-in gets CORS: nothing else answers a Canopy page's preflight.
+  const other = await fetch(server.base + '/api/auth/email/start', {
+    method: 'OPTIONS', headers: { Origin: tix, 'Access-Control-Request-Method': 'POST' }
+  });
+  assert.equal(other.headers.get('access-control-allow-origin'), null);
+
+  // A passkey made on the account page signs in from tickets' page.
+  const admin = browser(server);
+  await admin.post('/api/auth/admin-setup', { password: 'setup-pw' });
+  const made = await admin.signUp('host@example.com', 'Hana', 'Host');
+  const fromTix = browser(server, { origin: 'http://localhost:9999' });
+  fromTix.authenticator.creds.push(...admin.authenticator.creds);
+  const r = await fromTix.signInWithPasskey();
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.data.person.id, made.data.person.id);
+  assert.ok(fromTix.cookie, 'the session cookie came back');
+});
