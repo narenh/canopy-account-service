@@ -142,6 +142,20 @@ if (!browserSupportsWebAuthn()){
   document.getElementById('signInBtn').disabled = true;
 }
 
+// ?email: the visitor already chose email on another Canopy page (tickets'
+// "Continue with email": new here, or no passkey on this phone). The
+// passkey button would only offer back what they just passed on, so it
+// goes, and the email is the whole page.
+if (new URLSearchParams(window.location.search).has('email')){
+  document.getElementById('signInBtn').classList.add('hidden');
+  document.querySelector('#emailForm .or').classList.add('hidden');
+  const btn = document.getElementById('emailBtn');
+  btn.classList.remove('secondary');
+  btn.textContent = 'Continue';
+  document.getElementById('tagline').textContent = t('welcome.taglineEmail');
+  document.getElementById('email').focus();
+}
+
 document.getElementById('signInBtn').addEventListener('click', (e) => {
   const errorEl = document.getElementById('emailError');
   busy(e.currentTarget, errorEl, async () => { if (await signInWithPasskey(errorEl)) enter(); });

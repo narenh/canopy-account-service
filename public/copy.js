@@ -17,6 +17,8 @@ const COPY = {
   welcome: {
     title: 'Canopy',
     tagline: 'Sign in with your passkey, or enter your email to get started.',
+    // Arriving from another Canopy page's "Continue with email" (?email).
+    taglineEmail: "New here, or no passkey on this phone? Enter your email and we'll send you a code.",
     // First run: the setup password is ADMIN_PASSWORD from the server's settings.
     adminSetupHeading: 'Set up your admin account',
     adminSetupHint: 'Enter the setup password to set up your admin account.',
