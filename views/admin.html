@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Canopy Accounts</title>
-<meta name="theme-color" content="#183022">
+<meta name="theme-color" content="#008900">
 <link rel="stylesheet" href="/account.css">
 <style>
   /* Always a scrollbar's room, so switching tabs doesn't shift the page
@@ -13,14 +13,20 @@
   .wrap{max-width:640px;margin:0 auto;padding-bottom:40px;}
   header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
   header h1{margin:0;text-align:left;}
-  header a{color:var(--accent-text);font-size:13px;font-weight:600;text-decoration:none;}
+  header a{color:var(--on-bg);font-size:13px;font-weight:600;text-decoration:underline;}
   .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);}
   .tabs button{
     width:auto;background:none;color:var(--muted);border-radius:0;padding:10px 12px;font-size:14px;
     border-bottom:2px solid transparent;margin-bottom:-1px;
   }
-  .tabs button.active{color:#fff;border-bottom-color:var(--accent);}
-  .panel > p{text-align:left;}
+  .tabs button.active{color:var(--on-bg);border-bottom-color:var(--on-bg);}
+  /* On the bright background, not a card: white, with the active tab
+     marked by weight and its white underline rather than by colour. */
+  .tabs{border-bottom-color:rgba(255,255,255,.35);}
+  .tabs button{color:var(--on-bg);font-weight:500;}
+  .tabs button.active{font-weight:700;}
+  header h1{color:var(--on-bg);}
+  .panel > p{text-align:left;color:var(--on-bg);}
   .row{
     display:flex;align-items:center;gap:12px;padding:12px;
     background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;
@@ -43,7 +49,11 @@
     border:1px solid var(--field-line);border-radius:10px;padding:12px;margin-bottom:12px;user-select:all;
   }
   .sheet-buttons{display:flex;gap:8px;}
-  .image-setting{margin-bottom:20px;}
+  .image-setting{margin-bottom:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;}
+  .image-setting h3{margin:0 0 4px;font-size:15px;}
+  .image-setting .buttons{display:flex;gap:8px;}
+  .image-setting .buttons button{width:auto;}
+  #pageError:not(:empty){background:var(--card);border-radius:10px;padding:8px 10px;}
   .image-setting img{max-width:100%;max-height:120px;border-radius:8px;border:1px solid var(--line);display:block;margin:8px 0;}
   .image-setting p{text-align:left;margin-bottom:8px;}
   .image-setting label.upload{display:inline-block;width:auto;}
@@ -86,13 +96,19 @@
       <h3 data-copy="admin.logoHeading"></h3>
       <p data-copy="admin.logoHint"></p>
       <img class="hidden" alt="">
-      <label class="upload"><button type="button" class="secondary" style="width:auto" data-copy="admin.upload"></button><input type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+      <div class="buttons">
+        <label class="upload"><button type="button" class="secondary" data-copy="admin.upload"></button><input type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+        <button type="button" class="danger remove hidden" data-copy="admin.removeImage"></button>
+      </div>
     </div>
     <div class="image-setting" data-image="backdrop-image">
       <h3 data-copy="admin.backdropHeading"></h3>
       <p data-copy="admin.backdropHint"></p>
       <img class="hidden" alt="">
-      <label class="upload"><button type="button" class="secondary" style="width:auto" data-copy="admin.upload"></button><input type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+      <div class="buttons">
+        <label class="upload"><button type="button" class="secondary" data-copy="admin.upload"></button><input type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+        <button type="button" class="danger remove hidden" data-copy="admin.removeImage"></button>
+      </div>
     </div>
   </section>
 </div>
@@ -314,6 +330,7 @@ function loadImages(){
     try{
       const data = await api('GET', '/api/admin/' + box.dataset.image);
       img.classList.toggle('hidden', !data.url);
+      box.querySelector('.remove').classList.toggle('hidden', !data.url);
       if (data.url) img.src = data.url;
     }catch(e){ fail(e); }
   });
@@ -321,7 +338,16 @@ function loadImages(){
 
 document.querySelectorAll('.image-setting').forEach((box) => {
   const input = box.querySelector('input[type=file]');
-  box.querySelector('button').addEventListener('click', () => input.click());
+  box.querySelector('label.upload button').addEventListener('click', () => input.click());
+  // Back to none: no backdrop (just the page's own background), or the
+  // Canopy logo that ships with the service.
+  box.querySelector('.remove').addEventListener('click', async (e) => {
+    if (!confirm(t('admin.removeImageConfirm'))) return;
+    e.currentTarget.disabled = true;
+    try{ await api('DELETE', '/api/admin/' + box.dataset.image); }catch(err){ fail(err); }
+    e.currentTarget.disabled = false;
+    loadImages();
+  });
   input.addEventListener('change', async () => {
     const file = input.files && input.files[0];
     if (!file) return;

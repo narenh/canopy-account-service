@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Your Account · Canopy</title>
-<meta name="theme-color" content="#183022">
+<meta name="theme-color" content="#008900">
 <link rel="stylesheet" href="/account.css">
 <style>
   .stack{max-width:400px;margin:0 auto;display:flex;flex-direction:column;gap:16px;padding-bottom:40px;}
@@ -24,20 +24,21 @@
   .passkey .what span{color:var(--muted);display:block;font-size:12px;}
   .passkey button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .email-line{color:var(--muted);font-size:13px;text-align:center;margin:0 0 16px;}
-  /* The logo, centred over the page, with the admin's link to one side. */
-  .page-head{position:relative;max-width:400px;margin:4px auto 16px;min-height:24px;}
-  .page-head .site-logo{margin:0 auto;}
-  .page-head a{position:absolute;right:0;top:0;color:var(--accent-text);font-size:13px;font-weight:600;text-decoration:none;}
+  /* The admin's link, over the page (white: it sits on the bright top of
+     the background). The logo is in the card, where the green of its arc
+     shows. */
+  .page-head{max-width:400px;margin:0 auto 12px;text-align:right;min-height:18px;}
+  .page-head a{color:var(--on-bg);font-size:13px;font-weight:600;text-decoration:underline;}
   .name-row .field{flex:1;min-width:0;}
 </style>
 </head>
 <body>
   <header class="page-head">
-    <!-- LOGO_IMG -->
     <a href="/admin" id="adminLink" class="hidden" data-copy="profile.admin"></a>
   </header>
   <div class="stack">
     <form class="card" id="profileForm">
+      <!-- LOGO_IMG -->
       <h2 data-copy="profile.heading"></h2>
       <p class="email-line" id="emailLine"></p>
       <label class="photo-pick" id="photoPick">

@@ -139,8 +139,10 @@ const COPY = {
     logoHeading: 'Logo',
     logoHint: 'Shown at the top of the sign-in page. A PNG with a transparent background works best.',
     backdropHeading: 'Sign-in backdrop',
-    backdropHint: 'Fills the screen behind the sign-in card.',
+    backdropHint: 'Fills the screen behind the sign-in card, in place of the green background.',
     upload: 'Upload',
+    removeImage: 'Remove',
+    removeImageConfirm: 'Remove this image? The logo goes back to the Canopy logo; the sign-in page goes back to its plain background.',
     failed: 'Something went wrong. Try again.'
   }
 };

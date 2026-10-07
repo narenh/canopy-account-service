@@ -12,8 +12,14 @@
      can see where to type". --accent is the logo's #00A400 a step
      brighter, so dark text on it reads (white on the logo green itself
      is only 3.3:1). */
-  --bg:#183022;
-  --bg-glow:#24493a;        /* light through the canopy, top of the page */
+  /* The page: light through the canopy, bright green at the top centre
+     fading to deep green at the edges (the canopy-bg design: #008900 to
+     #0C4200 over 76% of the page each way). Bright at the top, so only
+     white text clears AA directly on it there (4.6:1); everything else
+     sits in a card. --on-bg is for the few things that don't. */
+  --bg:#0c4200;
+  --bg-top:#008900;
+  --on-bg:#ffffff;
   --card:#1f3b2d;
   --line:#36553f;
   --field:#142a1e;
@@ -30,10 +36,11 @@
   --silhouette:#6b8a77;
 }
 *{box-sizing:border-box;}
+html{background:var(--bg);}
 body{
   margin:0;
   min-height:100vh;
-  background:radial-gradient(120% 60% at 50% -10%, var(--bg-glow) 0%, var(--bg) 65%) fixed, var(--bg);
+  background:radial-gradient(76% 76% at 50% 0, var(--bg-top) 0%, var(--bg) 100%) no-repeat, var(--bg);
   color:var(--text);
   font-family:-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   padding:20px;
@@ -137,7 +144,7 @@ button.secondary{
   color:var(--text);
   border:1px solid var(--field-line);
 }
-button.danger{background:none;color:var(--danger);border:1px solid rgba(247,165,151,.5);}
+button.danger{background:var(--card);color:var(--danger);border:1px solid rgba(247,165,151,.5);}
 .passkey-btn{display:flex;align-items:center;justify-content:center;gap:8px;}
 .passkey-btn svg{width:20px;height:20px;flex:0 0 auto;}
 .or{

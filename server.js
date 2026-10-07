@@ -1050,6 +1050,10 @@ function mountImageRoutes(urlName, imageStore) {
     const meta = imageStore.save(req.file.buffer, req.file.mimetype);
     res.json({ ok: true, uploadedAt: meta.uploadedAt, url: `/${urlName}?v=${meta.uploadedAt}` });
   });
+  app.delete(`/api/admin/${urlName}`, (req, res) => {
+    imageStore.remove();
+    res.json({ ok: true });
+  });
   app.get(`/${urlName}`, (req, res) => {
     const meta = imageStore.getMeta();
     if (!meta) return res.status(404).end();

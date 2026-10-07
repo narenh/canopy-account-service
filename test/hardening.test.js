@@ -115,3 +115,21 @@ test('passkey sign-in from another Canopy page (CORS)', async (t) => {
   assert.equal(r.data.person.id, made.data.person.id);
   assert.ok(fromTix.cookie, 'the session cookie came back');
 });
+
+test('admin images: upload, then remove back to none', async (t) => {
+  const { startServer, browser } = require('./harness');
+  const server = await startServer();
+  t.after(() => server.stop());
+  const admin = browser(server);
+  await admin.post('/api/auth/admin-setup', { password: 'setup-pw' });
+  await admin.signUp('host@example.com', 'Hana', 'Host');
+  const form = new FormData();
+  form.append('image', new Blob([Buffer.from('89504e47', 'hex')], { type: 'image/png' }), 'bg.png');
+  assert.equal((await admin.upload('/api/admin/backdrop-image', form)).status, 200);
+  assert.equal((await browser(server).get('/backdrop-image')).status, 200);
+  assert.match((await browser(server).get('/')).text, /data-backdrop="\/backdrop-image\?v=/);
+  assert.equal((await browser(server).del('/api/admin/backdrop-image', { headers: { Origin: server.base } })).status, 401, 'admin only');
+  assert.equal((await admin.del('/api/admin/backdrop-image')).status, 200);
+  assert.equal((await browser(server).get('/backdrop-image')).status, 404);
+  assert.match((await browser(server).get('/')).text, /data-backdrop=""/);
+});
