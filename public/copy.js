@@ -106,7 +106,7 @@ const COPY = {
 
   // ---------------- The admin, at /admin ----------------
   admin: {
-    heading: 'Canopy Accounts',
+    heading: 'Account Manager',
     peopleTab: 'People',
     sitesTab: 'Sites',
     settingsTab: 'Settings',
@@ -115,7 +115,11 @@ const COPY = {
     noPasskey: 'no passkey',
     passkeysOne: '1 passkey',
     passkeysMany: '{count} passkeys',
-    rename: 'Rename',
+    editProfile: 'Edit profile',
+    editHeading: 'Edit {name}',
+    email: 'Email',
+    emailHint: "Changing someone's email counts it as unconfirmed until they next get a code there.",
+    emailTaken: 'That email already has an account.',
     resetPasskeys: 'Reset passkeys',
     setupLink: 'Setup link',
     resetConfirm: "Reset {name}'s passkeys? They'll be signed out everywhere, and you'll get a link to send them to set up a new one.",

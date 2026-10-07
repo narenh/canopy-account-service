@@ -737,33 +737,54 @@ const photoUpload = multer({
   }
 });
 
-app.patch('/api/profile', requireSignedIn, (req, res) => {
-  const body = req.body || {};
+// The fields of a profile, from a request body, cleaned: { changes } or
+// { error } (a 400 to send). Names are required; every other field is
+// only touched when sent, and empty clears it. The email is only for the
+// admin's edit (`withEmail`): people change everything else themselves.
+function profileChanges(body, { withEmail = false } = {}) {
   const names = cleanNames(body);
-  if (names.error) return res.status(400).json({ error: names.error });
-  let venmo;
-  if (body.venmoHandle !== undefined) {
-    venmo = cleanVenmo(body.venmoHandle);
-    if (venmo === false) return res.status(400).json(BAD_VENMO);
+  if (names.error) return { error: { error: names.error } };
+  const changes = { names };
+  const fields = [
+    ['venmoHandle', 'venmo', cleanVenmo, BAD_VENMO],
+    ['phone', 'phone', cleanPhone, BAD_PHONE],
+    ['instagram', 'instagram', cleanInstagram, BAD_INSTAGRAM],
+    ['cashapp', 'cashapp', cleanCashapp, BAD_CASHAPP]
+  ];
+  for (const [key, name, clean, bad] of fields) {
+    if (body[key] === undefined) continue;
+    const value = clean(body[key]);
+    if (value === false) return { error: bad };
+    changes[name] = value;
   }
-  let phone, instagram, cashapp;
-  if (body.phone !== undefined) {
-    phone = cleanPhone(body.phone);
-    if (phone === false) return res.status(400).json(BAD_PHONE);
+  if (withEmail && body.email !== undefined) {
+    const email = cleanEmail(body.email);
+    if (!email) return { error: { error: 'enter a valid email', reason: 'bad_email' } };
+    changes.email = email;
   }
-  if (body.instagram !== undefined) {
-    instagram = cleanInstagram(body.instagram);
-    if (instagram === false) return res.status(400).json(BAD_INSTAGRAM);
+  return { changes };
+}
+
+// Writes them; the person after, or { conflict: true } if the email is
+// someone else's.
+function applyProfileChanges(id, changes) {
+  if (changes.email !== undefined) {
+    const result = store.setPersonEmail(id, changes.email);
+    if (!result.ok) return result.reason === 'conflict' ? { conflict: true } : null;
   }
-  if (body.cashapp !== undefined) {
-    cashapp = cleanCashapp(body.cashapp);
-    if (cashapp === false) return res.status(400).json(BAD_CASHAPP);
-  }
-  req.person = store.renamePerson(req.person.id, names.firstName, names.lastName);
-  if (venmo !== undefined) req.person = store.setPersonVenmo(req.person.id, venmo);
-  if (phone !== undefined) req.person = store.setPersonPhone(req.person.id, phone);
-  if (instagram !== undefined) req.person = store.setPersonInstagram(req.person.id, instagram);
-  if (cashapp !== undefined) req.person = store.setPersonCashapp(req.person.id, cashapp);
+  let person = store.renamePerson(id, changes.names.firstName, changes.names.lastName);
+  if (!person) return null;
+  if (changes.venmo !== undefined) person = store.setPersonVenmo(id, changes.venmo);
+  if (changes.phone !== undefined) person = store.setPersonPhone(id, changes.phone);
+  if (changes.instagram !== undefined) person = store.setPersonInstagram(id, changes.instagram);
+  if (changes.cashapp !== undefined) person = store.setPersonCashapp(id, changes.cashapp);
+  return person;
+}
+
+app.patch('/api/profile', requireSignedIn, (req, res) => {
+  const { changes, error } = profileChanges(req.body || {});
+  if (error) return res.status(400).json(error);
+  req.person = applyProfileChanges(req.person.id, changes);
   res.json(meView(req));
 });
 
@@ -819,7 +840,7 @@ app.get('/photo/:personId', attachSession(false), (req, res) => {
 function adminPersonView(req, p) {
   return {
     ...personView(req, p),
-    passkeyCount: p.passkeyCount,
+    passkeyCount: p.passkeyCount !== undefined ? p.passkeyCount : store.passkeysOf(p.id).length,
     emailVerifiedAt: p.emailVerifiedAt,
     createdAt: p.createdAt
   };
@@ -835,10 +856,14 @@ app.get('/api/admin/people', (req, res) => {
   res.json({ people: store.listPeople().map((p) => adminPersonView(req, p)), adminPersonId: store.getAdminPersonId() });
 });
 
+// The admin's "Edit profile": every field the person can set, and their
+// email (a changed one counts as unverified until they type a code at it).
 app.patch('/api/admin/people/:id', (req, res) => {
-  const names = cleanNames(req.body || {});
-  if (names.error) return res.status(400).json({ error: names.error });
-  const person = store.renamePerson(req.params.id, names.firstName, names.lastName);
+  if (!store.getPerson(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const { changes, error } = profileChanges(req.body || {}, { withEmail: true });
+  if (error) return res.status(400).json(error);
+  const person = applyProfileChanges(req.params.id, changes);
+  if (person && person.conflict) return res.status(409).json({ error: 'that email already has an account', reason: 'conflict' });
   if (!person) return res.status(404).json({ error: 'not found' });
   res.json({ person: adminPersonView(req, person) });
 });

@@ -133,3 +133,35 @@ test('admin images: upload, then remove back to none', async (t) => {
   assert.equal((await browser(server).get('/backdrop-image')).status, 404);
   assert.match((await browser(server).get('/')).text, /data-backdrop=""/);
 });
+
+test("the admin's Edit profile: every field, email included", async (t) => {
+  const { startServer, browser } = require('./harness');
+  const server = await startServer();
+  t.after(() => server.stop());
+  const admin = browser(server);
+  await admin.post('/api/auth/admin-setup', { password: 'setup-pw' });
+  await admin.signUp('host@example.com', 'Hana', 'Host');
+  const ana = browser(server);
+  const anaId = (await ana.signUp('ana@example.com', 'Ana', 'Lima')).data.person.id;
+
+  const edit = (body) => admin.patch(`/api/admin/people/${anaId}`, { firstName: 'Ana', lastName: 'Lima', ...body });
+  const r = await edit({ firstName: 'Anna', email: 'Anna@Example.com', phone: '415 555 1234', instagram: '@anna', venmoHandle: 'anna-v', cashapp: '$AnnaL' });
+  assert.equal(r.status, 200, r.text);
+  const p = r.data.person;
+  assert.deepEqual([p.firstName, p.email, p.phone, p.instagram, p.venmo, p.cashapp],
+    ['Anna', 'anna@example.com', '+14155551234', 'anna', 'anna-v', 'AnnaL']);
+  assert.equal(p.emailVerifiedAt, null, 'a changed email is unverified');
+  assert.equal(p.passkeyCount, 1);
+  // She sees it, and signs in as before.
+  assert.equal((await ana.get('/api/me')).data.person.email, 'anna@example.com');
+
+  assert.equal((await edit({ email: 'host@example.com' })).status, 409, "someone else's email");
+  assert.equal((await edit({ email: 'nope' })).data.reason, 'bad_email');
+  assert.equal((await edit({ phone: '123' })).data.reason, 'bad_phone');
+  assert.equal((await edit({ firstName: '' })).status, 400);
+  assert.equal((await admin.patch('/api/admin/people/00000000-0000-0000-0000-000000000000', { firstName: 'A', lastName: 'B' })).status, 404);
+  assert.equal((await ana.patch(`/api/admin/people/${anaId}`, { firstName: 'X', lastName: 'Y' })).status, 401, 'admin only');
+  // People can't change their own email on the profile page.
+  const own = await ana.patch('/api/profile', { firstName: 'Anna', lastName: 'Lima', email: 'other@example.com' });
+  assert.equal(own.data.person.email, 'anna@example.com');
+});

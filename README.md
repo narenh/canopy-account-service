@@ -10,11 +10,15 @@ is this**, **what's their name and photo**, and **are they signed in**.
   an optional Venmo username, and a passkey. An email that already has
   an account goes on to make a new passkey on this phone. That's what a
   lost or new phone does, and nobody has to ask the admin for it.
-- At **`/profile`** they change their name, photo and Venmo, see their
-  passkeys (add one, remove one they've lost) and sign out.
-- At **`/admin`** the admin sees everyone (rename, reset passkeys, send a
-  setup link, delete), the **Sites** allowed to ask about people, and the
-  sign-in page's logo and backdrop.
+- At **`/profile`** they change their name, photo, phone, Instagram,
+  Venmo and Cash App, see their passkeys (add one, remove one they've
+  lost) and sign out.
+- At **`/admin`**, the **Account Manager**, the admin sees everyone (the
+  admin first, then by name) and can **Edit profile** (every field above
+  except the photo, plus the email: a changed email counts as unconfirmed
+  until its owner next gets a code there), reset passkeys, send a setup
+  link or delete; the **Sites** allowed to ask about people; and the
+  sign-in page's logo and backdrop (each can be removed again).
 - Every Canopy site asks it, server to server, who the visitor is
   (`GET /api/session`) and what other people are called
   (`GET /api/people`). `client/canopy-account.js` is the one file a site

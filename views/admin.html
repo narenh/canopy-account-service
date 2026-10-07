@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Canopy Accounts</title>
+<title>Account Manager · Canopy</title>
 <meta name="theme-color" content="#006e00">
 <link rel="stylesheet" href="/account.css">
 <style>
@@ -11,7 +11,15 @@
      sideways on desktop (tickets' fix). */
   html{overflow-y:scroll;}
   .wrap{max-width:640px;margin:0 auto;padding-bottom:40px;}
-  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  /* The logo top left and the link to your own account top right, the
+     title under them. */
+  header{margin-bottom:14px;}
+  header .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  header .site-logo{margin:0;max-height:40px;}
+  /* The sheet for editing someone: the profile page's fields. */
+  .edit-card{max-height:calc(100vh - 40px);overflow-y:auto;}
+  .edit-card .name-row{display:flex;gap:10px;}
+  .edit-card .name-row .field{flex:1;min-width:0;}
   header h1{margin:0;text-align:left;}
   header a{color:var(--on-bg);font-size:13px;font-weight:600;text-decoration:underline;}
   .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);}
@@ -67,8 +75,11 @@
 <body>
 <div class="wrap">
   <header>
+    <div class="top">
+      <!-- LOGO_IMG -->
+      <a href="/profile">Your account</a>
+    </div>
     <h1 data-copy="admin.heading"></h1>
-    <a href="/profile">Your account</a>
   </header>
   <div class="tabs">
     <button type="button" data-tab="people" data-copy="admin.peopleTab"></button>
@@ -124,6 +135,52 @@
       <button type="button" class="secondary" onclick="closeSheet()">Close</button>
     </div>
   </div>
+</div>
+
+<!-- Edit profile: every field the person can set, and their email. -->
+<div class="sheet-bg hidden" id="editSheet">
+  <form class="card edit-card" id="editForm">
+    <h2 id="editHeading"></h2>
+    <div class="name-row">
+      <div class="field">
+        <label class="field-label" for="editFirst" data-copy="profile.firstName"></label>
+        <input type="text" id="editFirst" maxlength="60" autocomplete="off">
+      </div>
+      <div class="field">
+        <label class="field-label" for="editLast" data-copy="profile.lastName"></label>
+        <input type="text" id="editLast" maxlength="60" autocomplete="off">
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label" for="editEmail" data-copy="admin.email"></label>
+      <input type="email" id="editEmail" maxlength="200" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label class="field-label" for="editPhone" data-copy="profile.phone"></label>
+      <input type="tel" id="editPhone" maxlength="25" autocomplete="off">
+    </div>
+    <div class="field">
+      <label class="field-label" for="editInstagram" data-copy="profile.instagram"></label>
+      <label class="handle-field"><span class="handle-prefix" aria-hidden="true">@</span>
+        <input type="text" id="editInstagram" maxlength="100" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    </div>
+    <div class="field">
+      <label class="field-label" for="editVenmo" data-copy="profile.venmo"></label>
+      <label class="handle-field"><span class="handle-prefix" aria-hidden="true">@</span>
+        <input type="text" id="editVenmo" maxlength="30" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    </div>
+    <div class="field">
+      <label class="field-label" for="editCashapp" data-copy="profile.cashapp"></label>
+      <label class="handle-field"><span class="handle-prefix" aria-hidden="true">$</span>
+        <input type="text" id="editCashapp" maxlength="21" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    </div>
+    <p class="hint" data-copy="admin.emailHint" style="text-align:left;margin:0 0 12px;"></p>
+    <div class="error" id="editError"></div>
+    <div class="sheet-buttons">
+      <button type="submit" id="editSave">Save</button>
+      <button type="button" class="secondary" onclick="closeEdit()">Cancel</button>
+    </div>
+  </form>
 </div>
 
 <script src="/copy.js"></script>
@@ -193,6 +250,9 @@ async function loadPeople(){
   try{ data = await api('GET', '/api/admin/people'); }catch(e){ fail(e); return; }
   const list = document.getElementById('peopleList');
   list.innerHTML = '';
+  // The admin first, then everyone by first and last name.
+  const byName = (a, b) => (a.firstName + ' ' + a.lastName).localeCompare(b.firstName + ' ' + b.lastName, undefined, { sensitivity: 'base' });
+  data.people.sort((a, b) => (b.id === data.adminPersonId) - (a.id === data.adminPersonId) || byName(a, b));
   data.people.forEach((p) => {
     const isAdmin = p.id === data.adminPersonId;
     const full = p.firstName + ' ' + p.lastName;
@@ -220,7 +280,7 @@ async function loadPeople(){
     who.append(name, sub);
     const actions = document.createElement('div');
     actions.className = 'actions';
-    actions.appendChild(button(t('admin.rename'), 'secondary', () => rename(p)));
+    actions.appendChild(button(t('admin.editProfile'), 'secondary', () => openEdit(p)));
     actions.appendChild(button(t('admin.setupLink'), 'secondary', (b) => setupLink(p, b, false)));
     // Your own reset or delete would lock you out (see server.js).
     if (!isAdmin){
@@ -232,14 +292,59 @@ async function loadPeople(){
   });
 }
 
-async function rename(p){
-  const first = prompt('First name', p.firstName);
-  if (first === null) return;
-  const last = prompt('Last name', p.lastName);
-  if (last === null) return;
-  try{ await api('PATCH', '/api/admin/people/' + p.id, { firstName: first, lastName: last }); }catch(e){ fail(e); }
-  loadPeople();
+// ---------------- Edit profile ----------------
+let editing = null;
+const PHONE_US = /^\+1(\d{3})(\d{3})(\d{4})$/;
+function openEdit(p){
+  editing = p;
+  document.getElementById('editHeading').textContent = t('admin.editHeading', { name: p.firstName + ' ' + p.lastName });
+  document.getElementById('editFirst').value = p.firstName;
+  document.getElementById('editLast').value = p.lastName;
+  document.getElementById('editEmail').value = p.email;
+  const m = PHONE_US.exec(p.phone || '');
+  document.getElementById('editPhone').value = m ? '(' + m[1] + ') ' + m[2] + '-' + m[3] : (p.phone || '');
+  document.getElementById('editInstagram').value = p.instagram || '';
+  document.getElementById('editVenmo').value = p.venmo || '';
+  document.getElementById('editCashapp').value = p.cashapp || '';
+  document.getElementById('editError').textContent = '';
+  document.getElementById('editSheet').classList.remove('hidden');
+  document.getElementById('editFirst').focus();
 }
+function closeEdit(){
+  document.getElementById('editSheet').classList.add('hidden');
+  editing = null;
+}
+document.getElementById('editSheet').addEventListener('click', (e) => { if (e.target.id === 'editSheet') closeEdit(); });
+
+const EDIT_ERRORS = {
+  bad_email: 'welcome.badEmail', conflict: 'admin.emailTaken', bad_phone: 'profile.badPhone',
+  bad_instagram: 'profile.badInstagram', bad_venmo: 'welcome.badVenmo', bad_cashapp: 'profile.badCashapp'
+};
+document.getElementById('editForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (!editing) return;
+  const errorEl = document.getElementById('editError');
+  busy(document.getElementById('editSave'), errorEl, async () => {
+    const { res, data } = await sendJson('PATCH', '/api/admin/people/' + encodeURIComponent(editing.id), {
+      firstName: document.getElementById('editFirst').value,
+      lastName: document.getElementById('editLast').value,
+      email: document.getElementById('editEmail').value,
+      phone: document.getElementById('editPhone').value,
+      instagram: document.getElementById('editInstagram').value,
+      venmoHandle: document.getElementById('editVenmo').value,
+      cashapp: document.getElementById('editCashapp').value
+    });
+    if (res.status === 401){ window.location.href = '/'; return; }
+    if (!res.ok){
+      errorEl.textContent = EDIT_ERRORS[data.reason] ? t(EDIT_ERRORS[data.reason])
+        : data.error === 'first and last name are both required' ? t('welcome.nameRequired')
+        : t('admin.failed') + detail(data.error || res.status);
+      return;
+    }
+    closeEdit();
+    loadPeople();
+  });
+});
 
 async function setupLink(p, btn, reset){
   const full = p.firstName + ' ' + p.lastName;
