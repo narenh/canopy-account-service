@@ -355,7 +355,10 @@ Signed in:
     "lastName": "Lima",
     "shortName": "Ana L",
     "photoUrl": "https://account.canopysf.com/photo/6f1c2b9e-4d0a-4a53-9a51-2f7e0c1d8b44?v=1759870000000",
-    "venmo": "ana-l"
+    "venmo": "ana-l",
+    "phone": "+14155551234",
+    "instagram": "ana.lima",
+    "cashapp": "AnaL"
   },
   "renewCookie": "canopy_session=q3Xb...; Path=/; Domain=canopysf.com; HttpOnly; SameSite=Lax; Max-Age=31536000; Secure"
 }
@@ -368,8 +371,12 @@ revoked site key"}`.
 `renewCookie` is only there when the cookie is due for its daily
 renewal. The site sends it back to the visitor as a `Set-Cookie`,
 unchanged. `X-Canopy-Site-Host` is how it gets the right `Domain`.
-`photoUrl` is `null` for someone with no photo, and `venmo` is `null`
-when there isn't one. Answers are `Cache-Control: no-store`.
+`photoUrl` is `null` for someone with no photo, and `venmo`, `phone`,
+`instagram` and `cashapp` are each `null` when there isn't one. They're
+all set on the profile page. `phone` is E.164 (`+` and the country code;
+US and Canadian numbers are typed without the +1). `instagram`, `venmo`
+and `cashapp` come without their `@` or `$`; Instagram names are
+lowercased, since Instagram ignores case. Answers are `Cache-Control: no-store`.
 
 ### `GET /api/people?ids=…`: everyone else
 

@@ -237,6 +237,33 @@ function cleanPhone(raw) {
 
 const BAD_PHONE = { error: 'that doesn\'t look like a phone number', reason: 'bad_phone' };
 
+// An Instagram username: letters, digits, . and _, at most 30, not
+// starting or ending with a dot or with two in a row (Instagram's own
+// rules). A leading @, or a pasted instagram.com link, is trimmed to the
+// name. Stored lowercase: Instagram names aren't case-sensitive. Empty
+// clears it (null); anything else invalid is false.
+function cleanInstagram(raw) {
+  const v = String(raw == null ? '' : raw).trim()
+    .replace(/^(https?:\/\/)?(www\.)?instagram\.com\//i, '')
+    .replace(/[/?#].*$/, '')
+    .replace(/^@+/, '')
+    .toLowerCase();
+  if (!v) return null;
+  return /^(?!\.)(?!.*\.\.)[a-z0-9._]{1,30}(?<!\.)$/.test(v) ? v : false;
+}
+
+// A Cash App $cashtag: letters, digits, - and _, at most 20, with at
+// least one letter. A leading $ is dropped. This is a little more lenient
+// than Cash App may be; it only has to keep out what can't be one.
+function cleanCashapp(raw) {
+  const v = String(raw == null ? '' : raw).trim().replace(/^\$+/, '');
+  if (!v) return null;
+  return /^[A-Za-z0-9_-]{1,20}$/.test(v) && /[A-Za-z]/.test(v) ? v : false;
+}
+
+const BAD_INSTAGRAM = { error: 'an Instagram username is letters, numbers, . and _ only', reason: 'bad_instagram' };
+const BAD_CASHAPP = { error: 'a $cashtag is letters, numbers, - and _ only, with at least one letter', reason: 'bad_cashapp' };
+
 // Everything about a person a site gets: /api/session for the visitor,
 // and the account service's own pages.
 function personView(req, p) {
@@ -248,7 +275,9 @@ function personView(req, p) {
     shortName: p.shortName,
     photoUrl: photoUrlFor(req, p),
     venmo: p.venmo,
-    phone: p.phone
+    phone: p.phone,
+    instagram: p.instagram,
+    cashapp: p.cashapp
   };
 }
 
@@ -690,14 +719,24 @@ app.patch('/api/profile', requireSignedIn, (req, res) => {
     venmo = cleanVenmo(body.venmoHandle);
     if (venmo === false) return res.status(400).json(BAD_VENMO);
   }
-  let phone;
+  let phone, instagram, cashapp;
   if (body.phone !== undefined) {
     phone = cleanPhone(body.phone);
     if (phone === false) return res.status(400).json(BAD_PHONE);
   }
+  if (body.instagram !== undefined) {
+    instagram = cleanInstagram(body.instagram);
+    if (instagram === false) return res.status(400).json(BAD_INSTAGRAM);
+  }
+  if (body.cashapp !== undefined) {
+    cashapp = cleanCashapp(body.cashapp);
+    if (cashapp === false) return res.status(400).json(BAD_CASHAPP);
+  }
   req.person = store.renamePerson(req.person.id, names.firstName, names.lastName);
   if (venmo !== undefined) req.person = store.setPersonVenmo(req.person.id, venmo);
   if (phone !== undefined) req.person = store.setPersonPhone(req.person.id, phone);
+  if (instagram !== undefined) req.person = store.setPersonInstagram(req.person.id, instagram);
+  if (cashapp !== undefined) req.person = store.setPersonCashapp(req.person.id, cashapp);
   res.json(meView(req));
 });
 

@@ -94,9 +94,10 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px;}
 input.code{font-size:22px;letter-spacing:6px;text-align:center;font-variant-numeric:tabular-nums;}
 .name-row{display:flex;gap:10px;}
 .name-row input{min-width:0;}
-/* Lined up on the text baseline, so the @ (which hangs below the line)
-   sits level with the name. */
-.venmo-field{
+/* A handle with its sign (@, $) inside the box. Lined up on the text
+   baseline, so the @ (which hangs below the line) sits level with the
+   name. */
+.handle-field{
   display:flex;
   align-items:baseline;
   background:var(--field);
@@ -106,9 +107,9 @@ input.code{font-size:22px;letter-spacing:6px;text-align:center;font-variant-nume
   margin-bottom:12px;
   cursor:text;
 }
-.venmo-at{color:var(--muted);font-size:16px;flex:0 0 auto;}
-.venmo-field:focus-within{outline:2px solid var(--accent);outline-offset:1px;}
-.venmo-field input[type="text"]{
+.handle-prefix{color:var(--muted);font-size:16px;flex:0 0 auto;}
+.handle-field:focus-within{outline:2px solid var(--accent);outline-offset:1px;}
+.handle-field input[type="text"]{
   border:none;
   background:none;
   padding:12px 0 12px 2px;
@@ -223,7 +224,7 @@ html.has-backdrop{background:var(--bg);}
 /* A label over a field: what goes in it, even once it's filled in. */
 .field-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 6px 2px;text-align:left;}
 .field{margin-bottom:12px;}
-.field input, .field .venmo-field{margin-bottom:0;}
+.field input, .field .handle-field{margin-bottom:0;}
 html.has-backdrop body{background:transparent;}
 body.has-backdrop::before{
   content:"";
@@ -276,9 +277,9 @@ body.has-backdrop .card{
 }
 body.has-backdrop p{color:#dbe5dd;}
 body.has-backdrop input[type="email"], body.has-backdrop input[type="text"], body.has-backdrop input[type="password"],
-body.has-backdrop .venmo-field{
+body.has-backdrop .handle-field{
   background:rgba(4,12,7,0.45);
   border-color:rgba(236,242,236,0.3);
 }
-body.has-backdrop .venmo-field input[type="text"]{background:none;}
+body.has-backdrop .handle-field input[type="text"]{background:none;}
 body.has-backdrop .photo-badge{border-color:#27463a;}

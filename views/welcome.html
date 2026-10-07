@@ -85,10 +85,10 @@
       <input type="text" id="lastName" placeholder="Last name" autocomplete="family-name" maxlength="60">
     </div>
     <!-- Optional. The @ is part of the box. -->
-    <label class="venmo-field">
-      <span class="venmo-at" aria-hidden="true">@</span>
-      <input type="text" id="venmoHandle" placeholder="Venmo username (optional)" maxlength="30"
-        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Venmo username (optional)">
+    <label class="handle-field">
+      <span class="handle-prefix" aria-hidden="true">@</span>
+      <input type="text" id="venmoHandle" placeholder="Venmo username" maxlength="30"
+        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Venmo username">
     </label>
     <div class="error" id="profileError"></div>
     <button type="submit" id="profileBtn">Sign up</button>

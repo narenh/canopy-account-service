@@ -135,6 +135,18 @@ test('accounts, end to end', async (t) => {
     }
     assert.equal((await phone('')).person.phone, null);
     assert.equal((await phone('4155551234')).person.phone, '+14155551234');
+    // Instagram and Cash App: the sign or a pasted link comes off.
+    const set = async (field, value) => (await ana.patch('/api/profile', { firstName: 'Ana Maria', lastName: 'Lima', [field]: value })).data;
+    assert.equal((await set('instagram', '@Ana.Lima_')).person.instagram, 'ana.lima_');
+    assert.equal((await set('instagram', 'https://www.instagram.com/ana.lima/?hl=en')).person.instagram, 'ana.lima');
+    for (const bad of ['.ana', 'ana.', 'an..a', 'ana lima', 'a'.repeat(31)]) assert.equal((await set('instagram', bad)).reason, 'bad_instagram', bad);
+    assert.equal((await set('cashapp', '$AnaL')).person.cashapp, 'AnaL');
+    for (const bad of ['1234', 'ana lima', 'a'.repeat(21)]) assert.equal((await set('cashapp', bad)).reason, 'bad_cashapp', bad);
+    // Fields left out are left alone.
+    const kept = (await ana.patch('/api/profile', { firstName: 'Ana Maria', lastName: 'Lima' })).data.person;
+    assert.equal(kept.instagram, 'ana.lima');
+    assert.equal(kept.cashapp, 'AnaL');
+    assert.equal(kept.phone, '+14155551234');
     const form = new FormData();
     form.append('photo', new Blob([Buffer.from('ffd8ffe0', 'hex')], { type: 'image/jpeg' }), 'photo.jpg');
     const up = await ana.upload('/api/profile/photo', form);
@@ -170,6 +182,8 @@ test('accounts, end to end', async (t) => {
     assert.equal(me.data.person.id, anaId);
     assert.equal(me.data.person.email, 'ana@example.com');
     assert.equal(me.data.person.phone, '+14155551234');
+    assert.equal(me.data.person.instagram, 'ana.lima');
+    assert.equal(me.data.person.cashapp, 'AnaL');
     assert.match(me.data.person.photoUrl, /\/photo\//);
 
     const ppl = await browser(server).get(`/api/people?ids=${anaId},${adminId},00000000-0000-0000-0000-000000000000`, { headers: auth });

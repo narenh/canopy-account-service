@@ -67,16 +67,32 @@
         </div>
       </div>
       <div class="field">
+        <label class="field-label" for="phone" data-copy="profile.phone"></label>
+        <input type="tel" id="phone" inputmode="tel" autocomplete="tel" maxlength="25">
+      </div>
+      <div class="field">
+        <label class="field-label" for="instagram" data-copy="profile.instagram"></label>
+        <label class="handle-field">
+          <span class="handle-prefix" aria-hidden="true">@</span>
+          <input type="text" id="instagram" maxlength="100"
+            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </label>
+      </div>
+      <div class="field">
         <label class="field-label" for="venmoHandle" data-copy="profile.venmo"></label>
-        <label class="venmo-field">
-          <span class="venmo-at" aria-hidden="true">@</span>
+        <label class="handle-field">
+          <span class="handle-prefix" aria-hidden="true">@</span>
           <input type="text" id="venmoHandle" maxlength="30"
             autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
         </label>
       </div>
       <div class="field">
-        <label class="field-label" for="phone" data-copy="profile.phone"></label>
-        <input type="tel" id="phone" inputmode="tel" autocomplete="tel" maxlength="25">
+        <label class="field-label" for="cashapp" data-copy="profile.cashapp"></label>
+        <label class="handle-field">
+          <span class="handle-prefix" aria-hidden="true">$</span>
+          <input type="text" id="cashapp" maxlength="21"
+            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </label>
       </div>
       <div class="error" id="profileError"></div>
       <div class="notice" id="profileNotice"></div>
@@ -122,6 +138,8 @@ function fill(person){
   document.getElementById('lastName').value = person.lastName;
   document.getElementById('venmoHandle').value = person.venmo || '';
   document.getElementById('phone').value = formatPhone(person.phone);
+  document.getElementById('instagram').value = person.instagram || '';
+  document.getElementById('cashapp').value = person.cashapp || '';
   document.getElementById('adminLink').classList.toggle('hidden', !person.isAdmin);
   if (person.photoUrl) picker.show(person.photoUrl);
 }
@@ -143,9 +161,12 @@ const picker = wirePhotoPicker(document.getElementById('photoPick'), document.ge
   }
 });
 
-document.getElementById('venmoHandle').addEventListener('input', (e) => {
-  const v = e.target.value.replace(/@/g, '');
-  if (v !== e.target.value) e.target.value = v;
+// Typing or pasting the sign does nothing -- the box already shows it.
+[['venmoHandle', /@/g], ['instagram', /^@+/], ['cashapp', /\$/g]].forEach(([id, sign]) => {
+  document.getElementById(id).addEventListener('input', (e) => {
+    const v = e.target.value.replace(sign, '');
+    if (v !== e.target.value) e.target.value = v;
+  });
 });
 
 document.getElementById('profileForm').addEventListener('submit', (e) => {
@@ -158,11 +179,15 @@ document.getElementById('profileForm').addEventListener('submit', (e) => {
       firstName: document.getElementById('firstName').value,
       lastName: document.getElementById('lastName').value,
       venmoHandle: document.getElementById('venmoHandle').value,
-      phone: document.getElementById('phone').value
+      phone: document.getElementById('phone').value,
+      instagram: document.getElementById('instagram').value,
+      cashapp: document.getElementById('cashapp').value
     });
     if (signedOut(res)) return;
     if (data.reason === 'bad_venmo'){ errorEl.textContent = t('welcome.badVenmo'); return; }
     if (data.reason === 'bad_phone'){ errorEl.textContent = t('profile.badPhone'); return; }
+    if (data.reason === 'bad_instagram'){ errorEl.textContent = t('profile.badInstagram'); return; }
+    if (data.reason === 'bad_cashapp'){ errorEl.textContent = t('profile.badCashapp'); return; }
     if (!res.ok){ errorEl.textContent = data.error === 'first and last name are both required' ? t('welcome.nameRequired') : t('profile.failed'); return; }
     fill(data.person);
     notice.textContent = t('profile.saved');
