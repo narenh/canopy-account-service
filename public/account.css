@@ -2,20 +2,22 @@
    (INLINE_STYLES), for the same reason its scripts are. Carried over from
    tickets' sign-in page. */
 :root{
-  /* Rainforest canopy: the page is light through the canopy, green at the
-     top centre fading to deep green at the edges (the canopy-bg design,
-     a step darker: #006E00 to #0A3800 over 76% of the page each way), and
-     cards are clear glass over it -- a 30% dark-green tint, blurred, with
-     a light edge. What's behind a card shows through, so every colour
-     here was checked against the card over the brightest point, the top
-     centre: white text 8.9:1, --muted 7.3:1, --accent-text 7.1:1,
-     --danger 6.5:1, --placeholder 8.5:1 in a field, white on a secondary
-     button 6.9:1 -- all clear WCAG AA (4.5:1). Field borders are 3.8:1
-     or better. --on-bg is for the few things straight on the background
-     (white is 6.5:1 at its brightest). --accent is the logo's #00A400 a
-     step brighter, so dark text on it reads (8.0:1). */
-  --bg:#0a3800;
-  --bg-top:#006e00;
+  /* Rainforest canopy at night: the page is a dark green mesh -- five
+     soft glows on near-black #03120C, the brightest #145C3E, with a faint
+     grain (.mesh-bg, below) -- and cards are clear glass over it, a 30%
+     dark-green tint, blurred, with a light edge. What's behind a card
+     shows through, so every colour here was checked against the card over
+     the brightest glow at full strength (and over the base): white text
+     10.3:1 (18.7:1), --muted 8.5:1 (15.4:1), --accent-text 8.3:1
+     (15.0:1), --danger 7.5:1 (13.6:1), --placeholder 9.3:1 (13.2:1) in a
+     field, white on a secondary button 7.8:1 (14.4:1) -- all clear WCAG
+     AA (4.5:1), and stay at 6.5:1 or more with the card's saturate(150%)
+     and the grain counted in. Field borders are 4.3:1 against the card
+     (3.9:1 with saturate and grain), past the 3:1 they need.
+     --on-bg is for the few things straight on the background (white is
+     8.0:1 at its brightest). --accent is the logo's #00A400 a step
+     brighter, so dark text on it reads (8.0:1). */
+  --bg:#03120c;
   --on-bg:#ffffff;
   --card:rgba(3,32,11,0.30);
   --card-solid:#0a4a12;     /* where a card colour can't be see-through */
@@ -38,13 +40,45 @@
 html{background:var(--bg);}
 body{
   margin:0;
-  min-height:100vh;
-  background:radial-gradient(76% 76% at 50% 0, var(--bg-top) 0%, var(--bg) 100%) no-repeat, var(--bg);
   color:var(--text);
   font-family:-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   padding:20px;
 }
 body.centered{display:flex;align-items:center;justify-content:center;}
+/* The page background: a mesh of five soft green glows on near-black,
+   with a faint film grain. Every page's <body> has class="mesh-bg". The
+   layers are fixed, so the mesh stays put while the page scrolls. With an
+   uploaded backdrop (has-backdrop, below) the photo takes the same two
+   pseudo-elements instead, so the mesh layers are left off there. */
+.mesh-bg {
+  --mesh-base: #03120c;
+  --mesh-1: #0f4a33;
+  --mesh-2: #0a3b2e;
+  --mesh-3: #145c3e;
+  --mesh-4: #072b1f;
+  --mesh-5: #0c3a28;
+  --mesh-grain: 0.07; /* 0 to disable grain */
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--mesh-base);
+  isolation: isolate;
+}
+.mesh-bg:not(.has-backdrop)::before {
+  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background-color: var(--mesh-base);
+  background-image:
+    radial-gradient(at 12% 18%, var(--mesh-1) 0, transparent 50%),
+    radial-gradient(at 88% 8%,  var(--mesh-2) 0, transparent 45%),
+    radial-gradient(at 72% 78%, var(--mesh-3) 0, transparent 50%),
+    radial-gradient(at 18% 88%, var(--mesh-4) 0, transparent 55%),
+    radial-gradient(at 50% 45%, var(--mesh-5) 0, transparent 60%);
+}
+.mesh-bg:not(.has-backdrop)::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  opacity: var(--mesh-grain); mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
 .hidden{display:none !important;}
 .card{
   width:100%;
@@ -228,8 +262,8 @@ button.danger{background:var(--card);color:var(--danger);border:1px solid rgba(2
    on a fixed layer fills a portrait phone and crops the sides; the dim
    keeps the card readable. 100lvh: the height with Safari's toolbars
    collapsed, so the image reaches the bottom edge behind a translucent
-   toolbar. The page colour moves to html, so body doesn't paint a solid
-   box over the backdrop (z-index -1). */
+   toolbar. The page colour moves to html and body goes transparent, so
+   only the photo and its dim show; these replace the mesh's layers. */
 html.has-backdrop{background:var(--bg);}
 /* A label over a field: what goes in it, even once it's filled in. */
 .field-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 6px 2px;text-align:left;}
