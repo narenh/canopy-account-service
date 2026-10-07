@@ -2,38 +2,38 @@
    (INLINE_STYLES), for the same reason its scripts are. Carried over from
    tickets' sign-in page. */
 :root{
-  /* Rainforest canopy: deep forest greens for the ground (not black), the
-     logo's green for what you tap. Green is only ever a surface, a button
-     or a link -- body text stays near-white or a pale grey-green, so it
-     reads. Every text colour clears WCAG AA (4.5:1) on every surface it
-     sits on: --text 11.1:1 on --card, --muted 7.3:1, --on-accent on
-     --accent 8.0:1, --accent-text 7.6:1, --danger 6.3:1, --placeholder
-     6.1:1 on --field. Field borders are 3.6:1 or better, the bar for "you
-     can see where to type". --accent is the logo's #00A400 a step
-     brighter, so dark text on it reads (white on the logo green itself
-     is only 3.3:1). */
-  /* The page: light through the canopy, bright green at the top centre
-     fading to deep green at the edges (the canopy-bg design: #008900 to
-     #0C4200 over 76% of the page each way). Bright at the top, so only
-     white text clears AA directly on it there (4.6:1); everything else
-     sits in a card. --on-bg is for the few things that don't. */
+  /* Rainforest canopy: the page is light through the canopy, bright green
+     at the top centre fading to deep green at the edges (the canopy-bg
+     design: #008900 to #0C4200 over 76% of the page each way), and cards
+     are clear glass over it -- a 30% dark-green tint, blurred, with a
+     light edge. What's behind a card shows through, so every colour here
+     was checked against the card over the brightest point, the top
+     centre: white text 7.0:1, --muted 5.7:1, --accent-text 5.6:1,
+     --danger 5.1:1, text in a field 10.6:1, --placeholder 7.2:1, white
+     on a secondary button 5.6:1 -- all clear WCAG AA (4.5:1). Field
+     borders are 3.2:1 or better. --on-bg is for the few things straight
+     on the background (only white clears AA at its brightest, 4.6:1).
+     --accent is the logo's #00A400 a step brighter, so dark text on it
+     reads (8.0:1). */
   --bg:#0c4200;
   --bg-top:#008900;
   --on-bg:#ffffff;
-  --card:#1f3b2d;
-  --line:#36553f;
-  --field:#142a1e;
-  --field-line:#6f9580;
-  --secondary:#29483a;
-  --text:#f0f5f0;
-  --muted:#bccdc0;
-  --placeholder:#93aa9b;
+  --card:rgba(3,32,11,0.30);
+  --card-solid:#0a4a12;     /* where a card colour can't be see-through */
+  --glass-edge:rgba(255,255,255,0.28);
+  --line:rgba(255,255,255,0.22);
+  --field:rgba(0,0,0,0.30);
+  --field-line:rgba(255,255,255,0.55);
+  --secondary:rgba(255,255,255,0.10);
+  --text:#ffffff;
+  --muted:#e2ece4;
+  --placeholder:#c9d8cd;
   --accent:#2ec44f;         /* buttons, the photo ring, badges */
   --on-accent:#03190a;      /* text and icons on --accent */
-  --accent-text:#6fe387;    /* links */
-  --danger:#f7a597;
-  --avatar:#2c4a3b;
-  --silhouette:#6b8a77;
+  --accent-text:#b6f5c3;    /* links */
+  --danger:#ffd2ca;
+  --avatar:rgba(0,0,0,0.25);
+  --silhouette:rgba(255,255,255,0.45);
 }
 *{box-sizing:border-box;}
 html{background:var(--bg);}
@@ -51,9 +51,13 @@ body.centered{display:flex;align-items:center;justify-content:center;}
   width:100%;
   max-width:340px;
   background:var(--card);
-  border:1px solid var(--line);
+  border:1px solid var(--glass-edge);
   border-radius:14px;
   padding:28px 24px;
+  /* Clear glass: the green shows through, blurred, with a lit top edge. */
+  -webkit-backdrop-filter:blur(18px) saturate(150%);
+  backdrop-filter:blur(18px) saturate(150%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.25), 0 10px 30px rgba(0,0,0,0.18);
 }
 .site-logo{
   display:block;
@@ -210,7 +214,7 @@ button.danger{background:var(--card);color:var(--danger);border:1px solid rgba(2
   border-radius:50%;
   background:var(--accent);
   color:var(--on-accent);
-  border:3px solid var(--card);
+  border:3px solid var(--card-solid);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -276,7 +280,7 @@ body.has-backdrop::after{
   mask-image:linear-gradient(to top, #000, transparent);
 }
 body.has-backdrop .card{
-  background:rgba(31,59,45,0.6);
+  background:rgba(3,32,11,0.55);
   border-color:rgba(236,242,236,0.14);
   -webkit-backdrop-filter:blur(20px) saturate(140%);
   backdrop-filter:blur(20px) saturate(140%);
@@ -289,4 +293,4 @@ body.has-backdrop .handle-field{
   border-color:rgba(236,242,236,0.3);
 }
 body.has-backdrop .handle-field input[type="text"]{background:none;}
-body.has-backdrop .photo-badge{border-color:#27463a;}
+body.has-backdrop .photo-badge{border-color:var(--card-solid);}
