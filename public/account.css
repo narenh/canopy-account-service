@@ -2,21 +2,20 @@
    (INLINE_STYLES), for the same reason its scripts are. Carried over from
    tickets' sign-in page. */
 :root{
-  /* Rainforest canopy: the page is light through the canopy, bright green
-     at the top centre fading to deep green at the edges (the canopy-bg
-     design: #008900 to #0C4200 over 76% of the page each way), and cards
-     are clear glass over it -- a 30% dark-green tint, blurred, with a
-     light edge. What's behind a card shows through, so every colour here
-     was checked against the card over the brightest point, the top
-     centre: white text 7.0:1, --muted 5.7:1, --accent-text 5.6:1,
-     --danger 5.1:1, text in a field 10.6:1, --placeholder 7.2:1, white
-     on a secondary button 5.6:1 -- all clear WCAG AA (4.5:1). Field
-     borders are 3.2:1 or better. --on-bg is for the few things straight
-     on the background (only white clears AA at its brightest, 4.6:1).
-     --accent is the logo's #00A400 a step brighter, so dark text on it
-     reads (8.0:1). */
-  --bg:#0c4200;
-  --bg-top:#008900;
+  /* Rainforest canopy: the page is light through the canopy, green at the
+     top centre fading to deep green at the edges (the canopy-bg design,
+     a step darker: #006E00 to #0A3800 over 76% of the page each way), and
+     cards are clear glass over it -- a 30% dark-green tint, blurred, with
+     a light edge. What's behind a card shows through, so every colour
+     here was checked against the card over the brightest point, the top
+     centre: white text 8.9:1, --muted 7.3:1, --accent-text 7.1:1,
+     --danger 6.5:1, --placeholder 8.5:1 in a field, white on a secondary
+     button 6.9:1 -- all clear WCAG AA (4.5:1). Field borders are 3.8:1
+     or better. --on-bg is for the few things straight on the background
+     (white is 6.5:1 at its brightest). --accent is the logo's #00A400 a
+     step brighter, so dark text on it reads (8.0:1). */
+  --bg:#0a3800;
+  --bg-top:#006e00;
   --on-bg:#ffffff;
   --card:rgba(3,32,11,0.30);
   --card-solid:#0a4a12;     /* where a card colour can't be see-through */
