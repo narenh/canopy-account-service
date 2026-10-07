@@ -725,6 +725,115 @@ app.get('/signout', attachSession(false), (req, res) => {
   res.redirect(back);
 });
 
+// ---------------- Changing your own email ----------------
+//
+// The email is the key to the account (lost-passkey codes go there), so
+// changing it takes three things:
+//   1. a passkey, with Face ID or the like, from someone already signed
+//      in: someone holding an unlocked phone, or a stolen cookie, can't;
+//   2. a code sent to the NEW address, typed back: no typos, and nobody
+//      claims an address that isn't theirs;
+//   3. a notice to the OLD address, the only warning its owner gets if it
+//      wasn't them.
+// The passkey check is good for 15 minutes and one change.
+
+const REAUTH_MS = 15 * 60 * 1000;
+
+app.post('/api/auth/reauth/options', requireSignedIn, handle(async (req, res) => {
+  const rpID = requirePasskeyRp(req, res);
+  if (!rpID) return;
+  const mine = store.passkeysOf(req.person.id);
+  const options = await webauthn.generateAuthenticationOptions({
+    rpID, userVerification: 'required', allowCredentials: mine.map((k) => ({ id: k.id, transports: k.transports }))
+  });
+  store.setPending(req.sess.idHash, { challenge: options.challenge, kind: 'reauth', personId: req.person.id });
+  res.json({ options });
+}));
+
+app.post('/api/auth/reauth/verify', requireSignedIn, handle(async (req, res) => {
+  const rpID = requirePasskeyRp(req, res);
+  if (!rpID) return;
+  const pending = store.takePending(req.sess.idHash);
+  if (!pending || pending.kind !== 'reauth' || pending.personId !== req.person.id || Date.now() - pending.at > PASSKEY_CEREMONY_MS) {
+    return res.status(400).json(EXPIRED);
+  }
+  const response = (req.body || {}).response;
+  const passkey = store.getPasskey(response && response.id);
+  // It has to be one of the signed-in person's own.
+  if (!passkey || passkey.personId !== req.person.id) return res.status(400).json(NOT_VERIFIED);
+  const origin = ceremonyOrigin(response);
+  if (!origin) return res.status(400).json(NOT_VERIFIED);
+  let result;
+  try {
+    result = await webauthn.verifyAuthenticationResponse({
+      response, expectedChallenge: pending.challenge, expectedOrigin: origin, expectedRPID: rpID,
+      credential: { id: passkey.id, publicKey: passkey.publicKey, counter: passkey.counter, transports: passkey.transports },
+      requireUserVerification: true
+    });
+  } catch (e) {
+    return res.status(400).json(NOT_VERIFIED);
+  }
+  if (!result.verified) return res.status(400).json(NOT_VERIFIED);
+  store.usePasskey(passkey.id, result.authenticationInfo.newCounter);
+  store.setReauth(req.sess.idHash, Date.now());
+  res.json({ ok: true });
+}));
+
+function recentlyReauthed(req) {
+  return !!req.sess.reauthAt && Date.now() - req.sess.reauthAt < REAUTH_MS;
+}
+
+const REAUTH_REQUIRED = { error: 'confirm with your passkey first', reason: 'reauth_required' };
+
+// The new address gets a code. One that's someone else's account is
+// refused without saying so -- "can't be used" -- so this isn't a way to
+// find out who else has an account.
+app.post('/api/profile/email/start', requireSignedIn, handle(async (req, res) => {
+  if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
+  const email = cleanEmail((req.body || {}).email);
+  if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
+  if (email === req.person.email) return res.status(400).json({ error: "that's already your email", reason: 'same_email' });
+  if (store.getPersonByEmail(email)) return res.status(409).json({ error: "that email can't be used", reason: 'email_unavailable' });
+  if (codeSendLimits.blocked(req, email)) return tooMany(res);
+  codeSendLimits.hit(req, email);
+  const code = store.issueEmailCode(req.sess.idHash, email);
+  try {
+    await mailer.sendCode(email, code, emailLogoUrl(req));
+  } catch (err) {
+    console.error(`[canopy-account] sending a code failed: ${err.message}`);
+    return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
+  }
+  res.json({ ok: true, email });
+}));
+
+app.post('/api/profile/email/verify', requireSignedIn, handle(async (req, res) => {
+  if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
+  const email = store.codeEmail(req.sess.idHash);
+  if (!email) return res.status(400).json({ error: 'that code has run out -- send a new one', reason: 'expired' });
+  if (codeGuessLimits.blocked(req, email)) return tooMany(res);
+  const result = store.checkEmailCode(req.sess.idHash, String((req.body || {}).code || '').replace(/\s+/g, ''));
+  if (result.outcome === 'expired') return res.status(400).json({ error: 'that code has run out -- send a new one', reason: 'expired' });
+  if (result.outcome === 'wrong') {
+    codeGuessLimits.hit(req, email);
+    return res.status(403).json({ error: "that isn't the code", reason: 'wrong_code' });
+  }
+  const oldEmail = req.person.email;
+  const changed = store.setPersonEmail(req.person.id, result.email);
+  if (!changed.ok) return res.status(409).json({ error: "that email can't be used", reason: 'email_unavailable' });
+  store.markEmailVerified(req.person.id);
+  // One change per passkey check, and the proven address isn't left
+  // lying around on the session for a sign-up.
+  store.setReauth(req.sess.idHash, null);
+  store.signIn(req.sess.idHash, req.person.id);
+  req.person = store.getPerson(req.person.id);
+  try {
+    await mailer.sendEmailChanged(oldEmail, req.person.email, emailLogoUrl(req));
+  } catch (err) {
+    console.error(`[canopy-account] the email-changed notice to the old address failed: ${err.message}`);
+  }
+  res.json(meView(req));
+}));
+
 // ---------------- Profile ----------------
 
 // The cropped photo the page makes is a few dozen KB; this is only a
