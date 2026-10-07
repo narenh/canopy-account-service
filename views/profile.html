@@ -29,6 +29,15 @@
   .email-line .link-btn{margin-left:6px;}
   #emailSheet input.code{margin-bottom:12px;}
   .name-row .field{flex:1;min-width:0;}
+  /* iPad and up: wider, with contact and payment fields side by side, so
+     the form isn't one long column on a big screen. On a phone each
+     field keeps its own line (two would be too cramped to type in). */
+  @media (min-width:700px){
+    .stack, .page-head{max-width:800px;}
+    .field-row{display:flex;gap:16px;}
+    .field-row .field{flex:1;min-width:0;}
+    .name-row{gap:16px;}
+  }
 </style>
 </head>
 <body class="mesh-bg">
@@ -67,33 +76,37 @@
           <input type="text" id="lastName" autocomplete="family-name" maxlength="60">
         </div>
       </div>
-      <div class="field">
-        <label class="field-label" for="phone" data-copy="profile.phone"></label>
-        <input type="tel" id="phone" inputmode="tel" autocomplete="tel" maxlength="25">
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label" for="phone" data-copy="profile.phone"></label>
+          <input type="tel" id="phone" inputmode="tel" autocomplete="tel" maxlength="25">
+        </div>
+        <div class="field">
+          <label class="field-label" for="instagram" data-copy="profile.instagram"></label>
+          <label class="handle-field">
+            <span class="handle-prefix" aria-hidden="true">@</span>
+            <input type="text" id="instagram" maxlength="100"
+              autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </label>
+        </div>
       </div>
-      <div class="field">
-        <label class="field-label" for="instagram" data-copy="profile.instagram"></label>
-        <label class="handle-field">
-          <span class="handle-prefix" aria-hidden="true">@</span>
-          <input type="text" id="instagram" maxlength="100"
-            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-        </label>
-      </div>
-      <div class="field">
-        <label class="field-label" for="venmoHandle" data-copy="profile.venmo"></label>
-        <label class="handle-field">
-          <span class="handle-prefix" aria-hidden="true">@</span>
-          <input type="text" id="venmoHandle" maxlength="30"
-            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-        </label>
-      </div>
-      <div class="field">
-        <label class="field-label" for="cashapp" data-copy="profile.cashapp"></label>
-        <label class="handle-field">
-          <span class="handle-prefix" aria-hidden="true">$</span>
-          <input type="text" id="cashapp" maxlength="21"
-            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-        </label>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label" for="venmoHandle" data-copy="profile.venmo"></label>
+          <label class="handle-field">
+            <span class="handle-prefix" aria-hidden="true">@</span>
+            <input type="text" id="venmoHandle" maxlength="30"
+              autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </label>
+        </div>
+        <div class="field">
+          <label class="field-label" for="cashapp" data-copy="profile.cashapp"></label>
+          <label class="handle-field">
+            <span class="handle-prefix" aria-hidden="true">$</span>
+            <input type="text" id="cashapp" maxlength="21"
+              autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </label>
+        </div>
       </div>
       <div class="error" id="profileError"></div>
       <div class="notice" id="profileNotice"></div>
