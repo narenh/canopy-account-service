@@ -40,6 +40,11 @@
   .find-hint{text-align:left;font-size:12px;margin:0 0 14px 28px;}
   /* Deleting your account: last on the page, and quiet until it's used. */
   .delete-card p{text-align:left;font-size:13px;color:var(--muted);margin:0 0 12px;}
+  /* Your calendar feed: subscribe, copy the link, or replace it. */
+  .calendar-card p{text-align:left;font-size:13px;margin:0 0 12px;}
+  .calendar-buttons{display:flex;gap:8px;margin-top:8px;}
+  .calendar-links{display:flex;justify-content:space-between;gap:12px;margin-top:12px;}
+  .calendar-links a{color:var(--accent-text);font-size:13px;font-weight:600;text-decoration:none;}
   #deleteSheet input{margin-bottom:12px;}
   /* iPad and up: wider, with contact and payment fields side by side, so
      the form isn't one long column on a big screen. On a phone each
@@ -139,6 +144,24 @@
       <div class="notice" id="profileNotice"></div>
       <button type="submit" id="saveBtn">Save</button>
     </form>
+
+    <!-- Your Canopy calendar: one link a calendar app subscribes to, with
+         everything you host or are going to on every Canopy site. Made
+         the first time this loads (/api/profile/calendar). -->
+    <div class="card calendar-card" id="calendarCard">
+      <h3 data-copy="profile.calendarHeading"></h3>
+      <p data-copy="profile.calendarHint"></p>
+      <button type="button" id="calendarAddBtn" data-copy="profile.calendarAdd"></button>
+      <div class="calendar-buttons">
+        <button type="button" class="secondary" id="calendarCopyBtn" data-copy="profile.calendarCopy"></button>
+      </div>
+      <div class="calendar-links">
+        <a href="#" id="calendarGoogle" target="_blank" rel="noopener noreferrer" data-copy="profile.calendarGoogle"></a>
+        <button type="button" class="link-btn" id="calendarResetBtn" data-copy="profile.calendarReset"></button>
+      </div>
+      <div class="notice" id="calendarNotice"></div>
+      <div class="error" id="calendarError"></div>
+    </div>
 
     <div class="card">
       <h3 data-copy="profile.passkeysHeading"></h3>
@@ -385,6 +408,53 @@ document.getElementById('addPasskeyBtn').addEventListener('click', (e) => {
       notice.textContent = t('profile.added');
       loadPasskeys();
     }
+  });
+});
+
+// ---------------- Your calendar ----------------
+// The feed's link, made the first time this asks. "Add to Calendar" opens
+// it as webcal://, which the phone's or the computer's calendar app
+// subscribes to; Google Calendar on the web needs its own page for that.
+let calendarLink = null;
+
+function showCalendar(cal){
+  calendarLink = cal;
+  document.getElementById('calendarGoogle').href = 'https://calendar.google.com/calendar/r?cid=' + encodeURIComponent(cal.webcalUrl);
+}
+
+async function loadCalendar(){
+  const res = await fetch('/api/profile/calendar');
+  if (signedOut(res)) return;
+  if (!res.ok){ document.getElementById('calendarError').textContent = t('welcome.failed') + detail(res.status); return; }
+  showCalendar((await res.json()).calendar);
+}
+
+document.getElementById('calendarAddBtn').addEventListener('click', () => {
+  if (calendarLink) window.location.href = calendarLink.webcalUrl;
+});
+
+document.getElementById('calendarCopyBtn').addEventListener('click', async () => {
+  if (!calendarLink) return;
+  const notice = document.getElementById('calendarNotice');
+  try{
+    await navigator.clipboard.writeText(calendarLink.url);
+    notice.textContent = t('profile.calendarCopied');
+  }catch(e){
+    // No clipboard (an old browser, or not allowed): show it to copy by hand.
+    window.prompt(t('profile.calendarCopyPrompt'), calendarLink.url);
+  }
+});
+
+document.getElementById('calendarResetBtn').addEventListener('click', (e) => {
+  if (!confirm(t('profile.calendarResetConfirm'))) return;
+  const notice = document.getElementById('calendarNotice');
+  notice.textContent = '';
+  busy(e.currentTarget, document.getElementById('calendarError'), async () => {
+    const { res, data } = await postJson('/api/profile/calendar/reset');
+    if (signedOut(res)) return;
+    if (!res.ok){ document.getElementById('calendarError').textContent = t('welcome.failed') + detail(data.error || res.status); return; }
+    showCalendar(data.calendar);
+    notice.textContent = t('profile.calendarResetDone');
   });
 });
 
@@ -696,6 +766,7 @@ document.getElementById('signOutBtn').addEventListener('click', (e) => {
   const { person } = await res.json();
   if (!person){ window.location.href = '/'; return; }
   fill(person);
+  loadCalendar();
   loadPasskeys();
   loadSessions();
   if (new URLSearchParams(window.location.search).has('verify')){

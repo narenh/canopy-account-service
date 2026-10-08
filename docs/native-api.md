@@ -548,6 +548,42 @@ show them as "Former member".
 The admin's account can't be deleted: `409 is_admin`. Don't offer it to
 them (`GET /me` says `isAdmin`).
 
+## Their calendar
+
+Everything they host or are going to on every Canopy site with a
+calendar (events first), as one link a calendar app subscribes to.
+
+```http
+GET /api/native/v1/me/calendar
+Authorization: Bearer <token>
+```
+
+```json
+200 {"calendar": {
+  "url": "https://account.canopysf.com/cal/q3Xb0Jk2lmZx8sQpN4vRw1tYc6EeHh9oLaDfUuKiGg0.ics",
+  "webcalUrl": "webcal://account.canopysf.com/cal/q3Xb0Jk2lmZx8sQpN4vRw1tYc6EeHh9oLaDfUuKiGg0.ics",
+  "createdAt": 1759870000000
+}}
+```
+
+The first ask makes the link; after that it's the same link every time.
+Show it the way the web profile does:
+
+- **Add to Calendar** opens `webcalUrl`. On iOS that's
+  `UIApplication.shared.open(URL(string: webcalUrl)!)`, and Calendar asks
+  to subscribe. Android has no webcal handler of its own: offer **Google
+  Calendar**, which opens
+  `https://calendar.google.com/calendar/r?cid=<webcalUrl, percent-encoded>`
+  in the browser.
+- **Copy link** copies `url`, for calendar apps that take a URL.
+- **Reset link** is `POST /me/calendar/reset` (`{}`), which answers the
+  same shape with a new link. The old one is a 404 from then on, so a
+  calendar subscribed to it stops updating until the new one is added.
+  Ask first.
+
+The link is the only key to the feed (calendar apps can't sign in), so
+treat it like the token: show it to its owner, and never log it.
+
 ## Where they're signed in, and signing out
 
 ```http

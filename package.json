@@ -19,6 +19,7 @@
     "nodemailer": "^10.0.10"
   },
   "devDependencies": {
+    "ical.js": "^2.2.1",
     "yaml": "^2.9.1"
   }
 }

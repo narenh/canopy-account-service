@@ -17,7 +17,9 @@ is this**, **what's their name and photo**, and **are they signed in**.
   signed in until then (see "Quick sign-up").
 - At **`/profile`** they change their name, photo, phone, Instagram,
   Venmo and Cash App, choose whether **people who know their phone number
-  or Instagram can find them** (on unless they turn it off), see their
+  or Instagram can find them** (on unless they turn it off), get their **Canopy calendar** (one link a calendar app
+  subscribes to, with what they're hosting or going to on every Canopy
+  site; see "Calendar feed"), see their
   passkeys (add one, remove one they've
   lost), see **where they're signed in** (each browser and app, with
   **Sign out** on any of them, and **Sign out everywhere**), sign out,
@@ -43,9 +45,9 @@ is this**, **what's their name and photo**, and **are they signed in**.
   owner types a code sent there), reset passkeys, send a setup link or
   delete; the **Sites** allowed to ask about people, each with switches
   for whether it **allows quick (unverified) accounts** and whether it
-  **can find people by phone number or Instagram**, and a box for each of
+  **can find people by phone number or Instagram**, a box for each of
   the visitor's own contact details it may be told (none for a new
-  site); **Lookups**, who has been finding people by phone or Instagram
+  site), and where its **calendar** is, if it has one; **Lookups**, who has been finding people by phone or Instagram
   and how often they missed (see "The lookup log"); and the sign-in
   page's logo and backdrop (each can be removed again).
 - The **iOS and Android apps** sign in through `/api/native/v1`, with
@@ -56,6 +58,10 @@ is this**, **what's their name and photo**, and **are they signed in**.
   (`GET /api/people`), and, if it's allowed to, who has a phone number or
   Instagram someone typed (`POST /api/people/lookup`). `client/canopy-account.js` is the one file a site
   copies in to do that.
+- It asks the sites with a calendar, server to server the other way
+  round, what's in each person's calendar (`GET
+  <site>/api/calendar/<personId>`, signed), and serves it all as one
+  feed at **`/cal/<secret>.ics`** (see "Calendar feed").
 
 Signing in on one Canopy site signs you in on all of them, because the
 session cookie belongs to `canopysf.com` rather than to any one
@@ -70,8 +76,10 @@ for anyone (the one setup password is for the admin and the server, see
 "The first admin"). The only emails it sends are sign-in codes and, when
 someone changes their email, a notice to the old address (or, for an
 address that already has an account, a notice there instead of a code). It doesn't
-hold any site's own data either: tickets' seats, orders and calendar
-feeds stay in tickets, keyed by the person ids from here.
+hold any site's own data either: tickets' seats and orders stay in
+tickets, keyed by the person ids from here. The calendar feed is made
+from what each site says when it's asked, kept in memory for a few
+minutes, never written down here.
 
 ## How it works
 
@@ -85,8 +93,9 @@ feeds stay in tickets, keyed by the person ids from here.
 - `lib/db.js` is persistence: one SQLite file, `DATA_DIR/account.db`.
   Its tables are `people`, `passkeys`, `sessions` (one per browser, keyed
   by the hash of its cookie), `setup_links` (hashed), `apps` (the sites,
-  with hashed keys), `lookup_log` (every lookup by phone or Instagram)
-  and `meta` (who the admin is). Every contact detail in
+  with hashed keys), `lookup_log` (every lookup by phone or Instagram),
+  `calendar_feeds` (each person's calendar link, hashed and sealed) and
+  `meta` (who the admin is). Every contact detail in
   it is encrypted, here and nowhere else (see "Contact details at
   rest"). The schema version
   lives in SQLite's `user_version`. A database from a version this code
@@ -95,6 +104,11 @@ feeds stay in tickets, keyed by the person ids from here.
 - `lib/contactCrypto.js` seals and opens contact details (AES-256-GCM)
   and makes the keyed hashes they're looked up by, from
   `CONTACT_ENCRYPTION_KEYS` and `LOOKUP_HMAC_KEY`.
+- `lib/calendar.js` is the calendar feed's asking: which sites, the
+  signed request, what's accepted back, the five minutes each answer is
+  kept and the last good one that stands in for a site that's down.
+  `lib/ics.js` writes the merged entries out as iCalendar (RFC 5545), by
+  hand.
 - `lib/session.js` is the `canopy_session` cookie: reading it, the
   `Set-Cookie` that makes or renews it, and when it's due for renewal.
   It also reads an app's `Authorization: Bearer` token, and names a
@@ -145,8 +159,10 @@ feeds stay in tickets, keyed by the person ids from here.
   to end with no browser, and it signs as a page or as the iOS or
   Android app. `test/docs.test.js` fails if a route under
   `/api/native/v1` is missing from `openapi.yaml` or the other way
-  around (its one dev dependency, `yaml`, reads the spec). `npm test`
-  runs them all.
+  around (its dev dependency `yaml` reads the spec). The calendar feed's
+  tests read every feed with `ical.js`, a strict iCalendar parser (the
+  other dev dependency), plus the line-by-line rules it lets slide
+  (`test/icsCheck.js`). `npm test` runs them all.
 
 `GET /healthz` answers `{"ok":true}`, and `GET /favicon.ico` answers an
 empty 204, so pages don't log a 404 for the icon they don't have.
@@ -382,6 +398,10 @@ simply stops existing here. Each site keeps its own records under that
 id, and when `/api/people` leaves an id out, the site shows that person
 as a **former member**. No one is notified.
 
+Their calendar link stops working at the same moment (a 404, like any
+wrong link), so a calendar subscribed to it stops updating; what's
+already in that calendar stays until its app gives up on the feed.
+
 **People can delete their own account**, from the bottom of their
 profile (or `DELETE /api/native/v1/me` in an app). It does exactly what
 the admin's delete does, and then signs that browser out. It takes the
@@ -452,7 +472,10 @@ pocketful of working sign-ins. With the hash, it's useless for that,
 because there's no getting from the hash back to the cookie. The same
 goes for the other secrets: setup link codes, site keys and emailed
 codes are all stored as hashes. Contact details, which have to be read
-back, are encrypted instead (see "Contact details at rest").
+back, are encrypted instead (see "Contact details at rest"). Two secrets
+are both: a person's calendar link (looked up by its hash, sealed so
+their profile can show it again) and each site's calendar secret (sealed
+only: it's what requests are signed with, so it has to be read back).
 
 **Every Canopy site's server sees the cookie.** It's sent to all of
 `canopysf.com`, and the sites pass it on to `/api/session`. That's fine
@@ -680,6 +703,8 @@ trusted for this.
 | Changing your email (new addresses) | 5 per person per hour | (the code limits) | (the code limits) |
 | New sessions not yet signed in | | 100 per hour | 1,000 per hour |
 | Lookups by phone or Instagram | 30 per asker per hour, 100 per day | 60 per hour | 300 per hour |
+| Calendar feed fetches | 120 per feed per hour | 1,200 per hour | |
+| Unknown calendar links | | 60 per hour | |
 
 On top of that, each code dies after 5 wrong tries. The apps count in
 the same counters as the web (they run the same code, see "Apps"), so
@@ -736,6 +761,11 @@ make one: only these POSTs do.
 
 **Why those numbers for lookups.** See "Finding people by phone or
 Instagram".
+
+**Why those numbers for the calendar feed.** See "Calendar feed". There's
+no ceiling across everyone: calendar apps fetch on their own, all day,
+and a ceiling tripping would stop everyone's calendar updating at once,
+for an hour, which is the one thing the feed is for.
 
 **What that means for one account.** With 5 codes an hour and 5 tries on
 each, someone going after one email gets **at most 25 guesses an hour**,
@@ -1032,6 +1062,218 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
   day-long private cache never shows an old one.
 - For "Sign out", link to `canopy.signOutUrl(req)`. That signs the
   browser out of every Canopy site and comes back.
+- `verifyCalendarRequest(req)` is for a site with a calendar: see the
+  next section.
+
+### `GET <site>/api/calendar/<personId>`: the site's calendar
+
+The one call that goes the other way: **this service asks the site**,
+for each person's calendar feed (see "Calendar feed"). A site with a
+calendar implements it; one without doesn't need to. Events is the
+first.
+
+**Setting a site up.** In the Sites tab, put the site's base URL in its
+**Calendar URL** and Save: `https://events.canopysf.com`, or its address
+on Coolify's internal network (`http://<its container>:3000`). The feed
+asks `<that>/api/calendar/<personId>`. The first time, that shows a
+**calendar secret**, once, like a key: set it on the site as
+`CANOPY_CALENDAR_SECRET`, and hand it to the client file:
+
+```js
+const canopy = require('./lib/canopy-account')({
+  url: process.env.CANOPY_ACCOUNT_URL,
+  key: process.env.CANOPY_ACCOUNT_KEY,
+  calendarSecret: process.env.CANOPY_CALENDAR_SECRET
+});
+
+app.get('/api/calendar/:personId', (req, res) => {
+  const personId = canopy.verifyCalendarRequest(req);
+  if (!personId) return res.status(401).json({ error: 'not the account service', reason: 'unauthorized' });
+  res.set('Cache-Control', 'no-store');
+  res.json({ entries: entriesFor(personId) });
+});
+```
+
+**New calendar secret** replaces it, and the old one stops working at
+once (until the site has the new one, feeds use that site's last good
+answers). Emptying the Calendar URL takes the site out of every feed, and
+so does **Cut off**.
+
+**How the site knows it's this service asking.** Every request is signed:
+
+```http
+GET /api/calendar/6f1c2b9e-4d0a-4a53-9a51-2f7e0c1d8b44 HTTP/1.1
+Authorization: Canopy-Calendar t=1759870000, sig=<64 hex characters>
+Accept: application/json
+```
+
+`sig` is HMAC-SHA256, keyed with the calendar secret, of three lines
+joined by `\n`: `canopy-calendar-v1`, the person id, and `t` (Unix
+seconds, as sent). The site works out the same, compares in constant
+time, and refuses a `t` more than five minutes from its own clock.
+`verifyCalendarRequest(req)` does all of that and answers the person id
+from the path (`req.params.personId`, or the URL's last part), or `null`,
+including on a site with no `calendarSecret`. This service never follows
+a redirect from a site.
+
+Why this, rather than a key sent as it is (the way a site asks here):
+this service can't send the site's own key, since it only keeps that
+key's hash, so it needs a secret of its own for each site, and has to
+keep it readable to use it. With a signature, that secret never travels.
+A request that ends up in a log, a proxy, or at a mistyped Calendar URL
+gives away one person's calendar on that one site for five minutes, not
+everyone's for good. That costs about a dozen lines on each side. The
+secret is sealed in the database like a contact detail, so a copy of the
+database doesn't have it either.
+
+**What the site answers.** JSON, `200`:
+
+```json
+{
+  "entries": [
+    {
+      "uid": "q7Lm2xR9TcWb@events.canopysf.com",
+      "title": "Rooftop dinner",
+      "start": "2026-10-31T03:00:00.000Z",
+      "end": "2026-10-31T06:00:00.000Z",
+      "allDay": false,
+      "timeZone": "America/Los_Angeles",
+      "location": "Ana's place, 1 Market St, San Francisco",
+      "url": "https://events.canopysf.com/e/AbCdEfGhIjKl",
+      "status": "confirmed",
+      "description": "Bring a jacket.",
+      "updatedAt": "2026-10-01T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+- **`uid`** (required) is what calendar apps know the entry by, so it
+  stays the same for the life of the entry, whatever else changes:
+  `<the site's own id for it>@<the site's host>`, so no two sites can
+  clash. Up to 255 characters, no spaces. Never from anything that can
+  change (events uses the event's internal id, not its link, which a
+  host can replace).
+- **`title`** (required), up to 500 characters.
+- **`start`** (required) and **`end`**: ISO 8601 with `Z` or an offset.
+  `end` may be `null`, and the feed shows the entry as an hour long. With
+  **`allDay: true`** both are dates (`2026-10-31`), `end` the last day
+  (or `null` for one day). The feed writes every time in UTC, which
+  calendar apps show in their own zone.
+- **`timeZone`**: the entry's IANA zone, if the site knows it. Not used
+  yet (UTC says the moment); there for when the feed writes local times.
+- **`location`**, **`description`**: text, up to 1,000 and 4,000
+  characters. Only what the person may see on the site.
+- **`url`**: an http(s) link to the entry on the site.
+- **`status`** (required): `confirmed`, `tentative` or `cancelled`. A
+  cancelled entry is shown as such (struck through in Apple's Calendar,
+  and "Cancelled:" in its title everywhere, since Google ignores the
+  status), so keep cancelled entries in the answer for a while rather
+  than dropping them: a dropped one vanishes without saying why.
+- **`updatedAt`** (required): when anything about the entry last
+  changed, the person's own part in it included (going → maybe). It
+  becomes the event's `LAST-MODIFIED`, `DTSTAMP` and `SEQUENCE`, which
+  is how a calendar app knows to update it.
+
+An entry that doesn't fit this is left out (the log says how many), not
+the whole answer. At most 1,000 entries and 2 MB are read. A person the
+site has nothing for is `{"entries": []}`, never a 404: the answer
+shouldn't say whether someone exists. Leave out whatever the person
+couldn't see on the site, and **never anyone's contact details or other
+guests' names**: the feed ends up on Google's and Apple's servers.
+
+**When the site is down.** It has three seconds to answer. A failure
+(anything but a `200` with `entries`, or no answer in time) is logged
+with the site's name and nothing else, and the person's last good answer
+from that site is used instead, however old (see "Calendar feed").
+
+## Calendar feed
+
+Everyone gets **one calendar link**,
+`https://account.canopysf.com/cal/<secret>.ics` (or `webcal://` the
+same, which is what phones subscribe with), with everything they're
+hosting or going to on every Canopy site that has a calendar, kept up to
+date by their calendar app. Events is the first; tickets and whatever
+comes next join by answering one request (see "`GET
+<site>/api/calendar/<personId>`").
+
+**On the profile**, a **Calendar** section: **Add to Calendar** (the
+`webcal://` link, which Apple Calendar, Outlook and most others subscribe
+from), **Copy link** (for an app that takes a URL), **Google Calendar**
+(Google's own subscribe page with the link filled in; Android has no
+webcal handler of its own) and **Reset link**. The apps get the same from
+`GET /api/native/v1/me/calendar` and `POST .../me/calendar/reset` (see
+`docs/native-api.md`); the web's are `GET /api/profile/calendar` and
+`POST /api/profile/calendar/reset`. All of them answer `{"calendar":
+{url, webcalUrl, createdAt}}` with `Cache-Control: no-store`.
+
+**The link is the key.** Calendar apps can't sign in or send a header,
+so whoever has the URL can read the feed: what you're going to, where,
+and when. So:
+
+- The secret is 32 random bytes (43 characters), made the first time
+  someone opens their Calendar section, one per person. The database
+  keeps its SHA-256, which a fetch is looked up by, and a sealed copy
+  (see "Contact details at rest") so the profile can show the same link
+  again. A copy of the database alone gives neither. (Storing only the
+  hash would have made the link show-once, and "Copy link" a reset every
+  time.)
+- **Reset link** makes a new one, and the old one is a 404 at once. A
+  calendar subscribed to the old link stops updating (it keeps what it
+  had) until the new one is added. That's the way out of a link shared
+  by mistake.
+- It travels where URLs go: the calendar app's servers (Google and Apple
+  fetch it from theirs, not from the phone) and the logs of anything in
+  between. That's every calendar subscription's trade. This service
+  never logs it: a failed fetch's log line has no path.
+- An unknown link is a plain `404 Not found`, exactly like a wrong URL.
+- **A deleted account's link is gone** with it (`calendar_feeds` goes
+  with the person), and the profile's delete section says so.
+
+**What's in it** is up to each site (events: see its README). For each
+site with a Calendar URL that isn't cut off, this service asks `GET
+<calendar URL>/api/calendar/<personId>`, signed (see the site's side
+above), all of them at once, three seconds each. An unverified person's
+feed only asks the sites that let unverified accounts in, the same line
+as `/api/session`. The answers are merged into one calendar, soonest
+first; if two sites send the same `uid`, the first site's wins.
+
+**Kept five minutes, and the last good one when a site is down.** Each
+person's answer from each site is kept in memory and used as it is for
+five minutes, so a calendar app polling every minute asks each site at
+most every five. After that the site is asked again, and if it fails (an
+error, a timeout, nonsense) **the last good answer stands in**, however
+old: a calendar app takes a missing event as a deleted one, and a site's
+deploy shouldn't wipe everyone's calendars. Only a site that has never
+answered for that person since this service started is left out. When
+every site is in that state (a restart while the only site is down), the
+feed answers **`503`** with `Retry-After: 300` instead of an empty
+calendar, which the app would take as "delete everything"; on a 503 it
+keeps what it has. The answers are in memory rather than on disk on
+purpose: they say where people will be, with home addresses, and on disk
+they'd be in every snapshot and backup. The cost is a restart during a
+site's outage, which the 503 covers while there's one site.
+
+**The answer** is `Content-Type: text/calendar; charset=utf-8`, with an
+`ETag` (of the text, which only changes when an entry does, so an app
+that sends `If-None-Match` gets a `304`), `Cache-Control: private,
+max-age=300`, and inside it `REFRESH-INTERVAL:PT1H` and
+`X-PUBLISHED-TTL:PT1H`, asking apps to look every hour (Apple and Outlook
+listen; Google fetches every several hours whatever it's told). The text
+is written by hand in `lib/ics.js`: CRLF line endings, lines folded at 75
+octets, text escaped, times in UTC, `STATUS` for tentative and cancelled
+events (and "Cancelled:" in a cancelled one's title), and `SEQUENCE` and
+`LAST-MODIFIED` from each entry's `updatedAt`. The tests read every feed
+they fetch with a strict parser.
+
+**Limits.** Calendar apps poll, some every few minutes, from every device
+someone has, and Google's fetchers share addresses across many people.
+So the limits are light: **120 fetches an hour per feed** (a phone, a
+laptop and a tablet every five minutes is 36), **1,200 an hour per
+address**, and **60 unknown links an hour per address**, after which that
+address waits (guessing 32 random bytes is hopeless; this is about
+noise). A `429` has `Retry-After: 600`, and calendar apps keep what they
+have meanwhile.
 
 ## Finding people by phone or Instagram
 
@@ -1271,7 +1513,14 @@ if the key is lost.
   the key, it can, and phone numbers are few enough to try them all: that
   is the same line as above, the live server.
 - Everything is sealed and opened in `lib/db.js` and nowhere else; the
-  rest of the code only ever sees plain values.
+  rest of the code only ever sees plain values. The same keys seal two
+  things that aren't contact details but have to be read back: each
+  person's calendar link and each site's calendar secret (see "Calendar
+  feed"). They're re-sealed on rotation like the rest. If a key is lost,
+  a person's link is replaced the next time they open their Calendar
+  section (the old one can't be shown, and stops working), and a site's
+  calendar is left out of feeds until the admin makes it a new calendar
+  secret.
 - **No plain text left in the file.** The database runs with SQLite's
   `secure_delete`, so a value that's changed or deleted is overwritten,
   not left in free space for a copy to carry, and the upgrade that first
@@ -1473,6 +1722,12 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
    `CANOPY_ACCOUNT_KEY` (see "For Canopy sites"). Tick only the contact
    details that site shows people about themselves; events needs none
    (see "What a site is told about the visitor").
+9. **Calendars.** For each site with a calendar (events), fill in its
+   **Calendar URL** in the Sites tab and Save, and give the calendar
+   secret it shows, once, to that site as `CANOPY_CALENDAR_SECRET` (see
+   "`GET <site>/api/calendar/<personId>`"). Check it from your own
+   profile: **Copy link** and open it in a browser; your events should be
+   in it.
 
 ### Confirming the volume is attached
 
@@ -1579,7 +1834,11 @@ every row is sealed in the upgrade's one transaction, the plain-text
 indexes go, keyed-hash columns and their indexes come in, and the file
 is rebuilt with `VACUUM` so none of the plain text is left in it. It
 needs the keys set before it runs. Version 10 added the lookup log
-(`lookup_log`, see "The lookup log"), empty to start with.
+(`lookup_log`, see "The lookup log"), empty to start with. Version 11
+added the calendar feed: each site's `calendar_url`, `calendar_secret`
+(sealed) and `calendar_secret_at`, all empty (no site has a calendar until
+the admin says where it is), and `calendar_feeds`, empty (a link is made
+when someone first opens their Calendar section).
 
 **Backups.** Two layers, the same as tickets:
 

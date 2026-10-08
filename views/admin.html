@@ -51,6 +51,10 @@
   .fields{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;margin-top:8px;font-size:12px;color:var(--muted);}
   .fields .switch{margin-top:0;}
   .fields-hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.4;}
+  /* A site's calendar URL, under its contact details. */
+  .calendar-url{display:flex;gap:6px;margin-top:10px;}
+  .calendar-url input{margin:0;font-size:13px;padding:6px 8px;min-width:0;flex:1;}
+  .calendar-url button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
   .tag.warn{background:#b8572a;color:#ffffff;}
   .concern{font-size:12px;color:#f3b38f;margin-top:4px;}
@@ -418,6 +422,7 @@ async function loadSites(){
     who.appendChild(siteSwitch(a, 'allowsUnverified', 'admin.allowsUnverified'));
     who.appendChild(siteSwitch(a, 'allowsLookup', 'admin.allowsLookup'));
     who.appendChild(siteFields(a));
+    who.appendChild(siteCalendar(a));
     const actions = document.createElement('div');
     actions.className = 'actions';
     actions.appendChild(button(t('admin.rekey'), 'secondary', async (b) => {
@@ -429,6 +434,17 @@ async function loadSites(){
       }catch(e){ fail(e); }
       loadSites();
     }));
+    if (a.calendarSecretAt){
+      actions.appendChild(button(t('admin.calendarRekey'), 'secondary', async (b) => {
+        if (!confirm(t('admin.calendarRekeyConfirm', { name: a.name }))) return;
+        b.disabled = true;
+        try{
+          const r = await api('POST', '/api/admin/apps/' + a.id + '/calendar-secret');
+          openSheet(t('admin.calendarSecretHeading', { name: a.name }), t('admin.calendarSecretHint'), r.calendarSecret);
+        }catch(e){ fail(e); }
+        loadSites();
+      }));
+    }
     if (!a.revokedAt){
       actions.appendChild(button(t('admin.revoke'), 'danger', async (b) => {
         if (!confirm(t('admin.revokeConfirm', { name: a.name }))) return;
@@ -496,6 +512,41 @@ function siteFields(a){
   hint.className = 'fields-hint';
   hint.textContent = t('admin.contactFieldsHint');
   wrap.append(fields, hint);
+  return wrap;
+}
+
+// Where this site's calendar is, for everyone's Canopy calendar feed.
+// Saving one the first time makes the site's calendar secret, shown once.
+function siteCalendar(a){
+  const wrap = document.createElement('div');
+  const form = document.createElement('form');
+  form.className = 'calendar-url';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'url';
+  input.autocapitalize = 'off';
+  input.spellcheck = false;
+  input.placeholder = t('admin.calendarUrl');
+  input.value = a.calendarUrl || '';
+  const save = document.createElement('button');
+  save.type = 'submit';
+  save.className = 'secondary';
+  save.textContent = t('admin.calendarSave');
+  form.append(input, save);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    save.disabled = true;
+    try{
+      const r = await api('PATCH', '/api/admin/apps/' + a.id, { calendarUrl: input.value.trim() });
+      if (r.calendarSecret) openSheet(t('admin.calendarSecretHeading', { name: a.name }), t('admin.calendarSecretHint'), r.calendarSecret);
+      loadSites();
+    }catch(err){ fail(err); }
+    save.disabled = false;
+  });
+  const hint = document.createElement('div');
+  hint.className = 'fields-hint';
+  hint.textContent = t('admin.calendarUrlHint') + (a.calendarSecretAt ? ' (' + t('admin.calendarSecretMade', { date: formatDate(a.calendarSecretAt) }) + ')' : '');
+  wrap.append(form, hint);
   return wrap;
 }
 

@@ -25,6 +25,8 @@ const session = require('./lib/session');
 const mailer = require('./lib/mailer');
 const { attemptLimiter, guessLimits, clientIp } = require('./lib/limits');
 const { BASE, isCanopyOrigin, safeReturn, passkeyRpId, isAppOrigin } = require('./lib/domain');
+const { createCalendar } = require('./lib/calendar');
+const { buildCalendar } = require('./lib/ics');
 
 const logoImageStore = createImageStore('logo');
 const backdropImageStore = createImageStore('backdrop');
@@ -1148,6 +1150,7 @@ const deleteMe = (req, res) => {
   const id = req.person.id;
   if (!store.deletePerson(id)) return res.status(404).json({ error: 'not found', reason: 'not_found' });
   try { photoStore.remove(id); } catch (e) {}
+  calendar.forget(id);
   if (!req.native) res.append('Set-Cookie', session.clearHeader(req.hostname));
   res.json({ ok: true });
 };
@@ -1342,6 +1345,45 @@ app.get('/photo/:personId', cookieOrBearer, (req, res) => {
   res.sendFile(file);
 });
 
+// ---------------- Your calendar feed ----------------
+//
+// One link per person that a calendar app subscribes to: everything they
+// host or are going to on every Canopy site with a calendar (the feed
+// itself is below, "The calendar feed"). The profile's Calendar section
+// asks for it, which makes it the first time; Reset link makes a new one
+// and the old one stops working at once (a link shared by mistake). The
+// link is the only key to the feed, since calendar apps can't sign in, so
+// it's 32 random bytes and the answers here are never cached.
+//
+// The tests shorten how long a site's answer is kept and how long a site
+// gets to answer (both in milliseconds), which nothing else should.
+const calendar = createCalendar({
+  sites: () => store.calendarSites(),
+  ...(process.env.NODE_ENV === 'test' && process.env.CALENDAR_FRESH_MS ? { freshMs: Number(process.env.CALENDAR_FRESH_MS) } : {}),
+  ...(process.env.NODE_ENV === 'test' && process.env.CALENDAR_TIMEOUT_MS ? { timeoutMs: Number(process.env.CALENDAR_TIMEOUT_MS) } : {})
+});
+
+function calendarView(req, feed) {
+  const url = `${publicBase(req)}/cal/${feed.secret}.ics`;
+  return { calendar: { url, webcalUrl: url.replace(/^https?:/, 'webcal:'), createdAt: feed.createdAt } };
+}
+
+const getCalendar = (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const feed = store.calendarFeed(req.person.id);
+  if (!feed) return res.status(404).json({ error: 'not found', reason: 'not_found' });
+  res.json(calendarView(req, feed));
+};
+app.get('/api/profile/calendar', requireSignedIn, getCalendar);
+
+const resetCalendar = (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const feed = store.resetCalendarFeed(req.person.id);
+  if (!feed) return res.status(404).json({ error: 'not found', reason: 'not_found' });
+  res.json(calendarView(req, feed));
+};
+app.post('/api/profile/calendar/reset', requireSignedIn, resetCalendar);
+
 // ---------------- Apps ----------------
 //
 // The iOS and Android apps sign in here and then use a token, sent as
@@ -1457,6 +1499,9 @@ native.get('/me/sessions', nativeSignedIn, listSessions);
 native.delete('/me/sessions/:id', nativeSignedIn, endOneSession);
 // Deleting the account (a passkey check first, as for the email).
 native.delete('/me', nativeSignedIn, deleteMe);
+// The calendar feed's link, and a new one.
+native.get('/me/calendar', nativeSignedIn, getCalendar);
+native.post('/me/calendar/reset', nativeSignedIn, resetCalendar);
 
 // The contract, for app developers and their tools. test/docs.test.js
 // keeps it and the routes above in step.
@@ -1545,6 +1590,7 @@ app.delete('/api/admin/people/:id', (req, res) => {
   if (!notTheAdmin(req, res)) return;
   if (!store.deletePerson(req.params.id)) return res.status(404).json({ error: 'not found' });
   try { photoStore.remove(req.params.id); } catch (e) {}
+  calendar.forget(req.params.id);
   res.json({ ok: true });
 });
 
@@ -1567,12 +1613,34 @@ app.post('/api/admin/apps/:id/rekey', (req, res) => {
   res.json(result);
 });
 
-// A site's switches: { allowsUnverified, allowsLookup, contactFields }.
-// contactFields is the whole list of the visitor's own contact details
-// /api/session tells it, from db.CONTACT_FIELDS.
+// Where a site's calendar is, for the calendar feed: an http(s) base URL
+// with nothing after the path (the feed adds /api/calendar/<personId>),
+// or '' for none. Over Coolify's internal network (http://events:3000) is
+// fine: the requests are signed, and the secret never travels.
+function cleanCalendarUrl(raw) {
+  if (raw === null || raw === '') return '';
+  if (typeof raw !== 'string' || raw.length > 500) return null;
+  let u;
+  try { u = new URL(raw.trim()); } catch (e) { return null; }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.username || u.password || u.search || u.hash) return null;
+  return u.href.replace(/\/+$/, '');
+}
+
+// A site's switches: { allowsUnverified, allowsLookup, contactFields,
+// calendarUrl }. contactFields is the whole list of the visitor's own
+// contact details /api/session tells it, from db.CONTACT_FIELDS. Giving a
+// site a calendar URL for the first time also makes its calendar secret,
+// which comes back once as `calendarSecret`.
 app.patch('/api/admin/apps/:id', (req, res) => {
   const body = req.body || {};
   const settings = {};
+  let calendarUrl;
+  if (body.calendarUrl !== undefined) {
+    calendarUrl = cleanCalendarUrl(body.calendarUrl);
+    if (calendarUrl === null) {
+      return res.status(400).json({ error: 'a calendar URL is http(s)://host[/path], with nothing after the path', reason: 'bad_calendar_url' });
+    }
+  }
   if (body.allowsUnverified !== undefined) settings.allowsUnverified = !!body.allowsUnverified;
   if (body.allowsLookup !== undefined) settings.allowsLookup = !!body.allowsLookup;
   if (body.contactFields !== undefined) {
@@ -1582,9 +1650,24 @@ app.patch('/api/admin/apps/:id', (req, res) => {
     }
     settings.contactFields = fields;
   }
-  const site = store.setAppSettings(req.params.id, settings);
+  let site = store.setAppSettings(req.params.id, settings);
   if (!site) return res.status(404).json({ error: 'not found' });
-  res.json({ app: site });
+  const answer = {};
+  if (calendarUrl !== undefined) {
+    const made = store.setAppCalendarUrl(req.params.id, calendarUrl);
+    site = made.app;
+    if (made.secret) answer.calendarSecret = made.secret;
+  }
+  res.json({ app: site, ...answer });
+});
+
+// A new calendar secret for a site, shown once; the old one stops working
+// at once, so the site's calendar is left out of feeds until it has the
+// new one (and their last good copy stands in until then).
+app.post('/api/admin/apps/:id/calendar-secret', (req, res) => {
+  const result = store.rekeyAppCalendar(req.params.id);
+  if (!result) return res.status(404).json({ error: 'not found' });
+  res.json({ app: result.app, calendarSecret: result.secret });
 });
 
 // The admin's Lookups: the last week of the lookup log, by asker, and the
@@ -1832,6 +1915,76 @@ app.post('/api/people/lookup', requireSite, (req, res) => {
   const found = store.findPerson(wanted);
   logLookup(entry, { matched: !!found });
   res.json({ person: found ? publicPersonView(req, found) : null });
+});
+
+// ---------------- The calendar feed ----------------
+//
+// GET /cal/<secret>.ics (or webcal://, which is the same request): the
+// person's Canopy calendar, merged from every site with a calendar
+// (lib/calendar.js asks them, lib/ics.js writes it). Calendar apps can't
+// sign in or send a header, so the secret in the URL is the whole key, and
+// it travels where URLs do (the calendar app's servers, proxies' logs).
+// That's every calendar subscription's trade; Reset link is the way out.
+// Nothing here logs the path.
+//
+// - An unknown secret is a bare 404, the same as any other wrong URL.
+// - A deleted person's feed is gone with them (calendar_feeds cascades).
+// - Calendar apps poll, some every few minutes and from several devices,
+//   and Google's fetchers share addresses across many people. So the
+//   limits are light: 120 fetches an hour per feed and 1,200 per address,
+//   and 60 unknown secrets an hour per address (guessing 32 random bytes
+//   is hopeless; that one is only about noise). A 429 says when to come
+//   back, and calendar apps keep what they had meanwhile.
+// - The answer has an ETag (of the text, which doesn't change unless an
+//   entry does), so an app that sends If-None-Match gets a 304, and
+//   `Cache-Control: private, max-age=300`, the time each site's answer is
+//   kept here anyway.
+// - When there are sites to ask and none has ever answered for this person
+//   (a restart while the only site is down), a 503 rather than an empty
+//   calendar, which would make the app delete everything it has.
+const CAL_FILE_RE = /^([A-Za-z0-9_-]{43})\.ics$/;
+const feedLimits = {
+  feed: attemptLimiter(120, HOUR),
+  address: attemptLimiter(1200, HOUR),
+  unknown: attemptLimiter(60, HOUR)
+};
+
+function feedRefusal(res, status, text, retryAfter) {
+  res.set('Cache-Control', 'no-store');
+  if (retryAfter) res.set('Retry-After', String(retryAfter));
+  res.status(status).type('text/plain').send(text);
+}
+
+app.get('/cal/:file', async (req, res) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  try {
+    const ip = clientIp(req);
+    if (feedLimits.address.blocked(ip) || feedLimits.unknown.blocked(ip)) return feedRefusal(res, 429, 'Too many requests\n', 600);
+    feedLimits.address.hit(ip);
+    const m = CAL_FILE_RE.exec(req.params.file);
+    const person = m ? store.personByCalendarSecret(m[1]) : null;
+    if (!person) {
+      feedLimits.unknown.hit(ip);
+      return feedRefusal(res, 404, 'Not found\n');
+    }
+    if (feedLimits.feed.blocked(person.id)) return feedRefusal(res, 429, 'Too many requests\n', 600);
+    feedLimits.feed.hit(person.id);
+    const result = await calendar.entriesFor(person);
+    if (result.unavailable) return feedRefusal(res, 503, 'Try again in a few minutes\n', 300);
+    const body = buildCalendar(result.entries);
+    const etag = `"${crypto.createHash('sha256').update(body).digest('base64url').slice(0, 32)}"`;
+    res.set('ETag', etag);
+    res.set('Cache-Control', 'private, max-age=300');
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Content-Disposition', 'inline; filename="canopy.ics"');
+    const sent = String(req.get('if-none-match') || '').split(',').map((t) => t.trim().replace(/^W\//, ''));
+    if (sent.includes(etag) || sent.includes('*')) return res.status(304).end();
+    res.send(body);
+  } catch (err) {
+    // Not the path: it's the secret.
+    console.error(`[canopy-account] calendar feed failed: ${(err && err.stack) || err}`);
+    if (!res.headersSent) feedRefusal(res, 500, 'Something went wrong\n');
+  }
 });
 
 // ---------------- Pages ----------------

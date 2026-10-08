@@ -85,8 +85,25 @@ test("one person's contact details never reach another person or a site", async 
     'stranger app code start': await strangerApp.post('/auth/email/start', { email: 'someone@example.com' }),
     'stranger app /me': await strangerApp.get('/me'),
     'stranger app begin': await nativeApp(server).post('/auth/begin', { platform: 'ios' }),
-    'openapi.yaml': { data: (await nativeApp(server).get('/openapi.yaml')).text }
+    'openapi.yaml': { data: (await nativeApp(server).get('/openapi.yaml')).text },
+    // The calendar feed's link, on the web and in the apps, and the feed.
+    'bob calendar': await bob.get('/api/profile/calendar'),
+    'bob calendar reset': await bob.post('/api/profile/calendar/reset'),
+    'bob app calendar': await bobApp.get('/me/calendar'),
+    'bob app calendar reset': await bobApp.post('/me/calendar/reset'),
+    'quinn app calendar': await quinnApp.get('/me/calendar'),
+    'stranger app calendar': await strangerApp.get('/me/calendar'),
+    'site list as bob': await bob.get('/api/admin/apps')
   };
+  {
+    const r = await browser(server).get(new URL(answers['bob app calendar reset'].data.calendar.url).pathname);
+    answers['bob feed'] = { data: r.text };
+    assert.equal(r.status, 200);
+  }
+  // Bob's link is his: not Ana's, and nothing of hers in it.
+  const anaCal = (await ana.get('/api/profile/calendar')).data.calendar.url;
+  assert.notEqual(answers['bob app calendar'].data.calendar.url, anaCal);
+  assert.equal(answers['stranger app calendar'].status, 401);
   assert.equal(answers['lookup by phone'].data.person.id, anaId, 'the lookup did find her');
   assert.equal(answers['bob /api/admin/people'].status, 401);
   assert.equal(answers['bob app lookup'].data.person.id, anaId, 'the lookup found her from the app too');

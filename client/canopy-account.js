@@ -13,6 +13,17 @@
 //   const people = await canopy.people(ids);       // Map of id -> { firstName, ... }
 //   const found = await canopy.lookup(req, { phone: '415 555 1234' });  // or { instagram }
 //
+// A site with a calendar (it shows up in each person's Canopy calendar
+// feed) also passes `calendarSecret: process.env.CANOPY_CALENDAR_SECRET`
+// (from the same Sites tab), and checks the account service's requests
+// with it:
+//
+//   app.get('/api/calendar/:personId', (req, res) => {
+//     const personId = canopy.verifyCalendarRequest(req);   // or null
+//     if (!personId) return res.status(401).json({ error: 'not the account service' });
+//     res.json({ entries: [...] });   // see the account service's README
+//   });
+//
 // req.person is { id, emailVerified, firstName, lastName, shortName,
 // photoUrl, findable }, plus whichever of the visitor's own email, phone,
 // instagram, venmo and cashapp the account admin has granted this site in
@@ -50,7 +61,12 @@ const crypto = require('crypto');
 const COOKIE = 'canopy_session';
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
-module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } = {}) {
+// How far the account service's clock and this one's may disagree, and so
+// how long a signed calendar request can be replayed, in seconds.
+const CALENDAR_SKEW_S = 5 * 60;
+const CALENDAR_AUTH_RE = /^Canopy-Calendar\s+t=(\d{1,12}),\s*sig=([0-9a-fA-F]{64})$/;
+
+module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000, calendarSecret } = {}) {
   if (!url || !key) throw new Error('canopy-account: url and key are both required');
   const base = String(url).replace(/\/+$/, '');
   const headers = { Authorization: `Bearer ${key}` };
@@ -233,5 +249,29 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
     return answer.person || null;
   }
 
-  return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl };
+  // The person whose calendar the account service is asking for, if this
+  // request really is the account service's: GET .../api/calendar/<personId>
+  // with `Authorization: Canopy-Calendar t=<unix seconds>, sig=<hex>`,
+  // sig being HMAC-SHA256 with this site's calendar secret of
+  // "canopy-calendar-v1\n<personId>\n<t>", and t within five minutes of
+  // now. The secret never travels, only a signature good for that one
+  // person for those few minutes. null for anything else, including a
+  // site with no calendarSecret set. The person id comes from the path
+  // (req.params.personId, or the URL's last part).
+  function verifyCalendarRequest(req) {
+    if (!calendarSecret) return null;
+    const m = CALENDAR_AUTH_RE.exec(String(req.headers.authorization || '').trim());
+    if (!m) return null;
+    let personId = req.params && req.params.personId;
+    if (!personId) {
+      const path = String(req.originalUrl || req.url || '').split('?')[0];
+      try { personId = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1)); } catch (e) { return null; }
+    }
+    if (!personId || personId.length > 100) return null;
+    if (Math.abs(Date.now() / 1000 - Number(m[1])) > CALENDAR_SKEW_S) return null;
+    const want = crypto.createHmac('sha256', String(calendarSecret)).update(`canopy-calendar-v1\n${personId}\n${m[1]}`).digest();
+    return crypto.timingSafeEqual(want, Buffer.from(m[2], 'hex')) ? personId : null;
+  }
+
+  return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl, verifyCalendarRequest };
 };
