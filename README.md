@@ -985,16 +985,21 @@ How the lookup works (`GET /api/people/lookup`, above):
   tab (off by default), and the asker has to be signed in there with a
   proven email. The limits are per asker, so an asker has to be someone,
   and an unverified account is too cheap to make for that to mean much.
-- **Only verified accounts are found.** This reverses an earlier
-  decision, which said unverified accounts can be found, because a phone
-  number or handle is proven by nothing for every account alike, so
-  telling them apart would be a false distinction. A security review
-  showed what that let through: anyone can make a quick sign-up in a
-  minute, with no inbox at all, type in a friend's name and their number
-  or Instagram, and be the one match, so a host who looks the friend up
-  invites the impostor (and sees the impostor's photo next to the
-  friend's name). Now an account whose email isn't proven is never the
-  answer; it becomes findable the moment its owner confirms their email.
+- **By phone, only verified accounts are found. By Instagram, any
+  account is.** The first version found unverified accounts both ways;
+  a security review then showed that anyone can make a quick sign-up in
+  a minute, with no inbox at all, type in a friend's name and their
+  number or handle, and be the one match, so a host who looks the friend
+  up invites the impostor. So for a while only verified accounts were
+  found at all. That was undone for Instagram, on purpose: on a new
+  network most people never confirm their email, and a lookup that can't
+  find them is no use for inviting them. The impostor case is narrower
+  than it sounds. It only works while the real person hasn't typed in
+  their own handle (once they do, the claim is contested and nobody is
+  found), and someone has to squat the handle of a person a host is about
+  to look for. Phones stay verified-only, because numbers can be
+  enumerated in a way handles can't, so a squatter could claim them in
+  bulk.
 
   **Its claim still counts against others.** If a verified account and
   an unverified one have typed in the same number, the answer is `null`,
