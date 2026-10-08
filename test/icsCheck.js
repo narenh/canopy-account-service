@@ -51,7 +51,7 @@ function checkIcs(text) {
   }
   assert.equal(stack.length, 0);
   events.forEach((e) => ONCE.forEach((p) => assert.equal(e[p], 1, `${p} once in every event`)));
-  for (const p of ['VERSION:2.0', 'PRODID:', 'X-WR-CALNAME:Canopy', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H']) {
+  for (const p of ['VERSION:2.0', 'PRODID:', 'X-WR-CALNAME:Canopy', 'REFRESH-INTERVAL;VALUE=DURATION:PT15M', 'X-PUBLISHED-TTL:PT15M']) {
     assert.ok(lines.some((l) => l.startsWith(p)), p);
   }
   const cal = new ICAL.Component(ICAL.parse(text));

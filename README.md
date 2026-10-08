@@ -1257,9 +1257,11 @@ site's outage, which the 503 covers while there's one site.
 **The answer** is `Content-Type: text/calendar; charset=utf-8`, with an
 `ETag` (of the text, which only changes when an entry does, so an app
 that sends `If-None-Match` gets a `304`), `Cache-Control: private,
-max-age=300`, and inside it `REFRESH-INTERVAL:PT1H` and
-`X-PUBLISHED-TTL:PT1H`, asking apps to look every hour (Apple and Outlook
-listen; Google fetches every several hours whatever it's told). The text
+max-age=300`, and inside it `REFRESH-INTERVAL:PT15M` and
+`X-PUBLISHED-TTL:PT15M`, asking apps to look every 15 minutes (Apple and
+Outlook listen; Google fetches every several hours whatever it's told,
+and a subscription stored in iCloud refreshes on iCloud's own, slower
+schedule). The text
 is written by hand in `lib/ics.js`: CRLF line endings, lines folded at 75
 octets, text escaped, times in UTC, `STATUS` for tentative and cancelled
 events (and "Cancelled:" in a cancelled one's title), and `SEQUENCE` and
