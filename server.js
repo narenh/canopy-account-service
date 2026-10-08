@@ -28,6 +28,8 @@ const { BASE, isCanopyOrigin, safeReturn, passkeyRpId, isAppOrigin } = require('
 const { createCalendar } = require('./lib/calendar');
 const { buildCalendar } = require('./lib/ics');
 const { testNames } = require('./lib/testPeople');
+const { addTestPhotos, PRAVATAR } = require('./lib/testPhotos');
+const { createSiteCalls } = require('./lib/testSites');
 
 const logoImageStore = createImageStore('logo');
 const backdropImageStore = createImageStore('backdrop');
@@ -1626,14 +1628,61 @@ app.delete('/api/admin/people/:id', (req, res) => {
 // (see "Admin: test people" in the README). To every site they're
 // ordinary people; only the admin's list says which they are.
 //
-//   POST   /api/admin/test-people         { count: 1-50 } makes that many
-//   POST   /api/admin/test-people/tokens  a signed-in token for each, once
-//   DELETE /api/admin/test-people         deletes every one of them
+//   POST   /api/admin/test-people           { count: 1-50 } makes that many, with photos
+//   POST   /api/admin/test-people/photos    a photo for each one without
+//   POST   /api/admin/test-people/tokens    a signed-in token for each, once
+//   POST   /api/admin/test-people/befriend  the admin, friends with all of them (on the sites)
+//   POST   /api/admin/test-people/events    { count: 1-20 } past events with them (on the sites)
+//   DELETE /api/admin/test-people           deletes every one of them
 //
 // At most TEST_PEOPLE_MAX at once, so a slip can't fill the database.
 const TEST_PEOPLE_MAX = 200;
+const TEST_EVENTS_MAX = 20;
+const TEST_EVENTS_DEFAULT = 6;
 
-app.post('/api/admin/test-people', (req, res) => {
+// Their photos come from pravatar (lib/testPhotos.js). The tests point
+// this at a stand-in and shorten its timeout, which nothing else should.
+const TEST_PHOTOS_URL = process.env.NODE_ENV === 'test' && process.env.TEST_PHOTOS_URL ? process.env.TEST_PHOTOS_URL : PRAVATAR;
+const TEST_PHOTOS_TIMEOUT = process.env.NODE_ENV === 'test' && process.env.TEST_PHOTOS_TIMEOUT_MS ? { timeoutMs: Number(process.env.TEST_PHOTOS_TIMEOUT_MS) } : {};
+
+// Kept as an upload is: cleaned of metadata, or not kept at all.
+function saveTestPhoto(id, buf) {
+  const clean = photoStore.withoutMetadata(buf);
+  if (!clean) return false;
+  photoStore.save(id, clean);
+  store.setPersonPhoto(id, Date.now());
+  return true;
+}
+
+const testPhotosFor = (ids) => addTestPhotos(ids, { save: saveTestPhoto, base: TEST_PHOTOS_URL, ...TEST_PHOTOS_TIMEOUT });
+
+// Asking the sites (lib/testSites.js). The tests shorten the timeout.
+const siteCalls = createSiteCalls({
+  sites: () => store.calendarSites(),
+  ...(process.env.NODE_ENV === 'test' && process.env.SITE_CALL_TIMEOUT_MS ? { timeoutMs: Number(process.env.SITE_CALL_TIMEOUT_MS) } : {})
+});
+
+// What the sites said, as the answer: 200 with each site's result when at
+// least one did it, else a refusal that says why.
+function sitesAnswer(res, results) {
+  if (!results.length) {
+    return res.status(409).json({ error: 'no site with a calendar secret has this', reason: 'no_sites' });
+  }
+  if (!results.some((r) => r.ok)) {
+    return res.status(502).json({ error: results.map((r) => `${r.site} ${r.error}`).join('; '), reason: 'sites_failed', sites: results });
+  }
+  res.json({ sites: results });
+}
+
+const testIds = () => store.listTestPeople().map((p) => p.id).slice(0, TEST_PEOPLE_MAX);
+
+function needsTestPeople(res, ids) {
+  if (ids.length) return true;
+  res.status(409).json({ error: 'there are no test people', reason: 'no_test_people' });
+  return false;
+}
+
+app.post('/api/admin/test-people', handle(async (req, res) => {
   const count = (req.body || {}).count;
   if (!Number.isInteger(count) || count < 1 || count > 50) {
     return res.status(400).json({ error: 'count is a whole number from 1 to 50', reason: 'bad_count' });
@@ -1643,8 +1692,19 @@ app.post('/api/admin/test-people', (req, res) => {
     return res.status(409).json({ error: `at most ${TEST_PEOPLE_MAX} test people at once`, reason: 'too_many_test_people' });
   }
   const made = store.createTestPeople(testNames(count, existing.map((p) => `${p.firstName} ${p.lastName}`)));
-  res.status(201).json({ people: made.map((p) => adminPersonView(req, p)), count: existing.length + made.length });
-});
+  // After they exist: a photo that can't be had is no photo, not a failure.
+  const photos = await testPhotosFor(made.map((p) => p.id));
+  const people = made.map((p) => adminPersonView(req, store.getPerson(p.id) || p));
+  res.status(201).json({ people, count: existing.length + made.length, photos });
+}));
+
+// For test people made without one (pravatar was down, or they're from
+// before photos): a photo each, if it can be had. { photos, without }.
+app.post('/api/admin/test-people/photos', handle(async (req, res) => {
+  const ids = store.listTestPeople().filter((p) => !p.photoAt).map((p) => p.id);
+  const photos = await testPhotosFor(ids);
+  res.json({ photos, without: ids.length - photos });
+}));
 
 // Every test person's token, signed in like an app's. Their earlier test
 // tokens stop working. Shown once: nothing here can show them again.
@@ -1653,14 +1713,77 @@ app.post('/api/admin/test-people/tokens', (req, res) => {
   res.json({ people: store.mintTestSessions() });
 });
 
-app.delete('/api/admin/test-people', (req, res) => {
+// The admin (whoever is signed in here: nothing in the request is read)
+// and every test person, friends both ways on each site. Only is_test
+// ids are ever sent. { sites: [{ site, ok, added, alreadyFriends } |
+// { site, ok: false, error }] }.
+app.post('/api/admin/test-people/befriend', handle(async (req, res) => {
+  const ids = testIds();
+  if (!needsTestPeople(res, ids)) return;
+  const results = await siteCalls({
+    purpose: 'test-friends',
+    method: 'POST',
+    path: '/api/internal/test-friends',
+    body: { personId: req.person.id, friendIds: ids },
+    fields: ['added', 'alreadyFriends']
+  });
+  sitesAnswer(res, results);
+}));
+
+// Past events with the admin and the test people, so the admin has
+// history with them (the inviter's Suggested). { count: 1-20 }, 6 if
+// not given. { sites: [{ site, ok, created } | ...] }.
+app.post('/api/admin/test-people/events', handle(async (req, res) => {
+  const raw = (req.body || {}).count;
+  const count = raw === undefined ? TEST_EVENTS_DEFAULT : raw;
+  if (!Number.isInteger(count) || count < 1 || count > TEST_EVENTS_MAX) {
+    return res.status(400).json({ error: `count is a whole number from 1 to ${TEST_EVENTS_MAX}`, reason: 'bad_count' });
+  }
+  const ids = testIds();
+  if (!needsTestPeople(res, ids)) return;
+  const results = await siteCalls({
+    purpose: 'test-events',
+    method: 'POST',
+    path: '/api/internal/test-events',
+    body: { personId: req.person.id, testPeopleIds: ids, count },
+    fields: ['created']
+  });
+  sitesAnswer(res, results);
+}));
+
+// First the sites: every test event goes, and every friendship with a
+// test person (a deleted person's friendships would only crowd real
+// friends out of the inviter's Suggested). A site that can't be reached is
+// reported, and the people are deleted anyway: { ok, deleted, sites:
+// [{ site, ok, events, friendships } | { site, ok: false, error }] }.
+app.delete('/api/admin/test-people', handle(async (req, res) => {
+  const before = testIds();
+  const [events, friends] = await Promise.all([
+    siteCalls({ purpose: 'test-events', method: 'DELETE', path: '/api/internal/test-events', fields: ['deleted'] }),
+    before.length
+      ? siteCalls({ purpose: 'test-friends', method: 'POST', path: '/api/internal/test-friends/remove', body: { personIds: before }, fields: ['removed'] })
+      : Promise.resolve([])
+  ]);
+  // One result per site, from its two answers.
+  const bySite = new Map();
+  const note = (r, key, value) => {
+    const had = bySite.get(r.site) || { site: r.site, ok: true };
+    if (r.ok) had[key] = value;
+    else {
+      had.ok = false;
+      had.error = had.error ? `${had.error}; ${r.error}` : r.error;
+    }
+    bySite.set(r.site, had);
+  };
+  events.forEach((r) => note(r, 'events', r.deleted));
+  friends.forEach((r) => note(r, 'friendships', r.removed));
   const ids = store.deleteTestPeople();
   ids.forEach((id) => {
     try { photoStore.remove(id); } catch (e) {}
     calendar.forget(id);
   });
-  res.json({ ok: true, deleted: ids.length });
-});
+  res.json({ ok: true, deleted: ids.length, sites: [...bySite.values()] });
+}));
 
 // Sites: each Canopy site that asks who's signed in has its own key,
 // shown once when it's made (or replaced). Cutting one off stops only

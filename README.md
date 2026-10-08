@@ -444,18 +444,25 @@ a test person. Only `GET /api/admin/people` does (`isTest`).
 varied list (`lib/testPeople.js`; no two the same at once while there are
 names left), an email `test-<12 hex>@canopy.invalid`, verified (so every
 site treats them as a confirmed guest), not findable, and no passkeys,
-phone, Instagram, Venmo, Cash App or photo. No photo is made here: that
-would need an image library this service doesn't have, and initials work
-everywhere. The seeding script in canopy-events can give them photos
-through the ordinary photo upload, with their tokens.
+phone, Instagram, Venmo or Cash App. **A photo**: a made-up face from
+`https://i.pravatar.cc/512?img=<1-70>` (`lib/testPhotos.js`), fetched here
+once they've been made and kept exactly as an upload is (its metadata
+taken out, one square JPEG per person), so nothing tells it apart. The
+faces are taken in a shuffled order, so nobody in one batch shares one.
+4 at a time, 5 seconds each, 25 seconds for the batch: anyone pravatar
+doesn't answer for in time (or answers with something that isn't a JPEG)
+just has no photo, and the people are made all the same.
 
 **The admin API** (an admin session and a Canopy Origin, like every
 `/api/admin` route):
 
-- `POST /api/admin/test-people` `{ "count": 1-50 }` makes that many and
-  returns them (`{ people, count }`, `count` being how many there are now).
-  Call it again for more; at most 200 exist at once (`409
-  too_many_test_people`).
+- `POST /api/admin/test-people` `{ "count": 1-50 }` makes that many, gives
+  them photos, and returns them (`{ people, count, photos }`, `count`
+  being how many there are now and `photos` how many got one). Call it
+  again for more; at most 200 exist at once (`409 too_many_test_people`).
+- `POST /api/admin/test-people/photos` gives a photo to every test person
+  without one: `{ photos, without }` (how many still have none). The
+  page's **Add photos**, enabled only while someone has none.
 - `POST /api/admin/test-people/tokens` signs every test person in and
   returns `{ people: [{ id, firstName, lastName, token }] }`. Each token is
   a session like an app's (only its SHA-256 is stored; `client_kind`
@@ -464,9 +471,63 @@ through the ordinary photo upload, with their tokens.
   signs out every earlier test session and makes new ones. The page shows
   them once, with **Copy** and **Download** (`canopy-test-tokens.json`, the
   file the seeding script reads).
-- `DELETE /api/admin/test-people` deletes every test person, the same way
-  as any account (sessions, passkeys, setup links, calendar feed, photo);
-  sites show them as former members. `{ ok, deleted }`.
+- `POST /api/admin/test-people/befriend` (**Make me friends with all test
+  people**) makes the signed-in admin and every test person friends, both
+  ways, on each site (below). Nothing in the request is read: the ids
+  sent are the admin's own and the `is_test` people's, at most 200.
+  `{ sites: [{ site, ok: true, added, alreadyFriends }] }`; the page says
+  "Friends with 38 test people." `409 no_test_people` with none, `409
+  no_sites` with no site to ask, `502 sites_failed` (with each site's
+  reason in `error` and `sites`) when no site did it.
+- `POST /api/admin/test-people/events` `{ "count": 1-20 }` (6 if not
+  given; the page always asks for 6) (**Make past events with me**) has
+  each site make that many past events with the admin and the test
+  people, so the admin has history with them (events' inviter orders its
+  Suggested by it). `{ sites: [{ site, ok: true, created }] }`, and the same
+  refusals.
+- `DELETE /api/admin/test-people` first asks each site to delete every
+  test event and every friendship with these people (so they don't crowd
+  real friends out of anything), then deletes every test person, the
+  same way as any account (sessions, passkeys, setup links, calendar
+  feed, photo); sites show them as former members. `{ ok, deleted, sites:
+  [{ site, ok: true, events, friendships } | { site, ok: false, error }]
+  }`. A site that can't be reached is reported (and the page says what's
+  left there), and the people are deleted anyway.
+
+**Asking the sites** (`lib/testSites.js`). Friendships and events are
+each site's own, so this service asks. Which sites: the ones the calendar
+feed asks (a calendar URL and a calendar secret, not cut off), at the same
+URL; in practice, events. A site that answers 404 doesn't have these and
+is left out of the answer. 15 seconds each. The requests are signed with
+the site's calendar secret, but bound to the one request:
+
+```
+Authorization: Canopy-Internal t=<unix seconds>, n=<32 hex>, sig=<hex>
+sig = HMAC-SHA256(calendar secret,
+  "canopy-internal-v1\n<purpose>\n<METHOD>\n<path and query>\n<t>\n<n>\n<SHA-256 hex of the body>")
+```
+
+The purpose is `test-friends` or `test-events`, n is random for each
+request, and the body is the JSON as `JSON.stringify` writes it (`''` for
+none). The site checks it with `client/canopy-account.js`'s
+`verifyInternalRequest(req, purpose)`: the same string, t within a minute
+of its own clock, and an n it hasn't seen in that minute. So a request
+that ends up in a log can't be sent again, changed, or sent elsewhere,
+and a calendar signature (another scheme, another string) can never pass
+for one of these, nor the other way round. The client file's
+`internalAuthorization` makes the header; this service signs with it.
+The requests:
+
+| | |
+|---|---|
+| `POST <site>/api/internal/test-friends` `{ personId, friendIds }` | `{ added, alreadyFriends }` |
+| `POST <site>/api/internal/test-friends/remove` `{ personIds }` | `{ removed }` |
+| `POST <site>/api/internal/test-events` `{ personId, testPeopleIds, count }` | `{ created }` |
+| `DELETE <site>/api/internal/test-events` | `{ deleted }` |
+
+What events does with them is in its README ("Internal: the Account
+Manager's test people tools"). No new setting: the calendar secret a
+site already has is the key.
 
 **What keeps them from being anything more.**
 
@@ -496,8 +557,16 @@ through the ordinary photo upload, with their tokens.
   ends them.
 - Count 1-50 per call and 200 in all: enough for a busy friends list
   (30-40 is the aim), small enough that a slip can't fill the database.
-- No generated avatars here (no new native dependency); photos are the
-  seeding script's job, through the same upload a person uses.
+- Photos are fetched, not generated (no new native dependency), and go
+  through the same cleaning and storage as an upload. Fetched here rather
+  than by the seeding script, so the button is all it takes. A failure
+  is no photo, never a failed create.
+- The site calls reuse the calendar secret rather than a new one: no new
+  setting to make in the Sites tab or set in Coolify, and both would live
+  in the same two places anyway. What keeps the two uses apart is the
+  signed string (purpose, method, path, body, a nonce), not the key.
+- The befriended person is whoever is signed in as the admin, never an
+  id from the request; the ids sent are only ever `is_test` ones.
 - A quick sign-up with a test person's address is told it's taken, like
   any address with an account: a quick sign-up sends no email, and with
   no code there's no takeover.
@@ -1137,7 +1206,9 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
 - For "Sign out", link to `canopy.signOutUrl(req)`. That signs the
   browser out of every Canopy site and comes back.
 - `verifyCalendarRequest(req)` is for a site with a calendar: see the
-  next section.
+  next section. `verifyInternalRequest(req, purpose)` checks this
+  service's other signed requests with the same secret (see "Admin: test
+  people"); `require('./canopy-account').internalAuthorization` makes them.
 
 ### `GET <site>/api/calendar/<personId>`: the site's calendar
 

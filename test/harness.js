@@ -30,7 +30,10 @@ async function startServer(extraEnv = {}) {
   const ownDir = !extraEnv.DATA_DIR;
   const dataDir = extraEnv.DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-account-test-'));
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ADMIN_PASSWORD: 'setup-pw', NODE_ENV: 'test', SMTP_HOST: '', ...TEST_KEYS, ...extraEnv },
+    // Test people's photos come from a stand-in, never the real pravatar:
+    // by default a port nothing listens on (test/test-people.test.js
+    // gives a real stand-in).
+    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ADMIN_PASSWORD: 'setup-pw', NODE_ENV: 'test', SMTP_HOST: '', TEST_PHOTOS_URL: 'http://127.0.0.1:9', ...TEST_KEYS, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let output = '';

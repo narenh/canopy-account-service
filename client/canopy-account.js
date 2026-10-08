@@ -24,6 +24,15 @@
 //     res.json({ entries: [...] });   // see the account service's README
 //   });
 //
+// The same secret also checks the account service's other signed requests
+// to the site (the Account Manager's test people tools, for one), each
+// bound to what it's for:
+//
+//   app.post('/api/internal/test-friends', (req, res) => {
+//     if (!canopy.verifyInternalRequest(req, 'test-friends')) return res.status(401).json(...);
+//     ...
+//   });
+//
 // req.person is { id, emailVerified, firstName, lastName, shortName,
 // photoUrl, findable }, plus whichever of the visitor's own email, phone,
 // instagram, venmo and cashapp the account admin has granted this site in
@@ -65,6 +74,51 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 // how long a signed calendar request can be replayed, in seconds.
 const CALENDAR_SKEW_S = 5 * 60;
 const CALENDAR_AUTH_RE = /^Canopy-Calendar\s+t=(\d{1,12}),\s*sig=([0-9a-fA-F]{64})$/;
+
+// The account service's other signed requests: `Authorization:
+// Canopy-Internal t=<unix seconds>, n=<32 hex>, sig=<hex>`, n being
+// random for each request and sig HMAC-SHA256, keyed with the site's
+// calendar secret, of
+//
+//   canopy-internal-v1\n<purpose>\n<METHOD>\n<path and query>\n<t>\n<n>\n<SHA-256 hex of the body>
+//
+// So a signature is good for one purpose, one method, one URL and one
+// body, for a minute either side of now, and once (n is what lets the
+// same request be sent twice in a second, and the second still count). A calendar signature
+// ("canopy-calendar-v1\n..." under another scheme name) can never pass for
+// one of these, nor one of these for it. The body is the request's JSON
+// as JSON.stringify writes it, or '' for none (internalBody below): what's
+// checked is exactly the object the route then reads, so no raw bytes
+// have to be kept.
+const INTERNAL_SKEW_S = 60;
+const INTERNAL_AUTH_RE = /^Canopy-Internal\s+t=(\d{1,12}),\s*n=([0-9a-f]{32}),\s*sig=([0-9a-fA-F]{64})$/;
+const PURPOSE_RE = /^[a-z0-9-]{1,40}$/;
+
+// The body as it's signed: '' for none (or an empty object, which is what
+// Express makes of none), else its JSON.
+function internalBody(body) {
+  if (body == null) return '';
+  if (typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 0) return '';
+  return JSON.stringify(body);
+}
+
+function internalSignature(secret, { purpose, method, path, t, n, body }) {
+  const bodyHash = crypto.createHash('sha256').update(internalBody(body)).digest('hex');
+  return crypto.createHmac('sha256', String(secret))
+    .update(`canopy-internal-v1\n${purpose}\n${String(method).toUpperCase()}\n${path}\n${t}\n${n}\n${bodyHash}`)
+    .digest('hex');
+}
+
+// The Authorization header for one of those requests, as the account
+// service makes it: `url` is the whole URL it's sent to (only its path
+// and query are signed), `body` the object sent as JSON (or nothing).
+function internalAuthorization(secret, { purpose, method, url, body }, now = Date.now()) {
+  if (!PURPOSE_RE.test(String(purpose))) throw new Error('canopy-account: a purpose is a-z, 0-9 and -');
+  const u = new URL(url);
+  const t = Math.floor(now / 1000);
+  const n = crypto.randomBytes(16).toString('hex');
+  return `Canopy-Internal t=${t}, n=${n}, sig=${internalSignature(secret, { purpose, method, path: u.pathname + u.search, t, n, body })}`;
+}
 
 module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000, calendarSecret } = {}) {
   if (!url || !key) throw new Error('canopy-account: url and key are both required');
@@ -273,5 +327,33 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000, c
     return crypto.timingSafeEqual(want, Buffer.from(m[2], 'hex')) ? personId : null;
   }
 
-  return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl, verifyCalendarRequest };
+  // Requests already taken, until they'd be too old anyway: n -> t.
+  const usedInternal = new Map();
+
+  // Whether this request really is the account service's, signed for
+  // `purpose` (see INTERNAL_AUTH_RE above): the method, the path and query
+  // (req.originalUrl), the JSON body (req.body, so it goes after
+  // express.json()), t within a minute of now, and an n not seen before. false for anything else, including a site with no
+  // calendarSecret set.
+  function verifyInternalRequest(req, purpose) {
+    if (!calendarSecret || !PURPOSE_RE.test(String(purpose))) return false;
+    const m = INTERNAL_AUTH_RE.exec(String(req.headers.authorization || '').trim());
+    if (!m) return false;
+    const now = Date.now() / 1000;
+    if (Math.abs(now - Number(m[1])) > INTERNAL_SKEW_S) return false;
+    const n = m[2];
+    const want = Buffer.from(internalSignature(calendarSecret, {
+      purpose, method: req.method, path: String(req.originalUrl || req.url || ''), t: m[1], n, body: req.body
+    }), 'hex');
+    if (!crypto.timingSafeEqual(want, Buffer.from(m[3], 'hex'))) return false;
+    for (const [k, t] of usedInternal) if (Math.abs(now - t) > INTERNAL_SKEW_S) usedInternal.delete(k);
+    if (usedInternal.has(n)) return false;
+    usedInternal.set(n, Number(m[1]));
+    return true;
+  }
+
+  return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl, verifyCalendarRequest, verifyInternalRequest };
 };
+
+// For the account service, which signs (the site only checks).
+module.exports.internalAuthorization = internalAuthorization;

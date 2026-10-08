@@ -59,7 +59,8 @@
   .tag.warn{background:#b8572a;color:#ffffff;}
   /* A test person: made up, to fill events (see "Admin: test people"). */
   .tag.test{background:#e8811a;color:#ffffff;}
-  /* Test people: their count, and the three things to do with them. */
+  /* Test people: their count, the things to do with them, and what the
+     last one did. */
   .test-people{margin-bottom:14px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;}
   .test-people h3{margin:0 0 4px;font-size:15px;}
   .test-people p{text-align:left;margin:0 0 10px;font-size:13px;color:var(--muted);}
@@ -67,6 +68,9 @@
   .test-people .inline-form input{width:auto;flex:1;min-width:0;}
   .test-people .buttons{display:flex;gap:8px;flex-wrap:wrap;}
   .test-people .buttons button{width:auto;}
+  .test-people p.test-result{margin:10px 0 0;color:var(--text);}
+  .test-people p.test-result:empty{display:none;}
+  .test-people p.test-result.failed{color:var(--danger);}
   #tokensText{
     width:100%;box-sizing:border-box;height:220px;font-family:ui-monospace,Menlo,monospace;font-size:12px;
     background:var(--field);border:1px solid var(--field-line);border-radius:10px;padding:10px;margin-bottom:12px;resize:vertical;
@@ -126,8 +130,13 @@
       </form>
       <div class="buttons">
         <button type="button" class="secondary" id="testTokensBtn" data-copy="admin.testTokens"></button>
+        <button type="button" class="secondary" id="testFriendsBtn" data-copy="admin.testFriends"></button>
+        <button type="button" class="secondary" id="testEventsBtn" data-copy="admin.testEvents"></button>
+        <button type="button" class="secondary" id="testPhotosBtn" data-copy="admin.testPhotos"></button>
         <button type="button" class="danger" id="testDeleteBtn" data-copy="admin.testDelete"></button>
       </div>
+      <!-- What the last of these did, or why it didn't. -->
+      <p class="test-result" id="testResult" aria-live="polite"></p>
     </div>
     <div id="peopleList"></div>
   </section>
@@ -320,8 +329,12 @@ async function loadPeople(){
   testPeopleCount = data.people.filter((p) => p.isTest).length;
   document.getElementById('testCount').textContent = testPeopleCount === 0 ? t('admin.testNone')
     : testPeopleCount === 1 ? t('admin.testOne') : t('admin.testMany', { count: testPeopleCount });
-  document.getElementById('testTokensBtn').disabled = testPeopleCount === 0;
-  document.getElementById('testDeleteBtn').disabled = testPeopleCount === 0;
+  ['testTokensBtn', 'testFriendsBtn', 'testEventsBtn', 'testDeleteBtn'].forEach((id) => {
+    document.getElementById(id).disabled = testPeopleCount === 0;
+  });
+  // Only while someone has no photo (pravatar was down, or they're from
+  // before photos).
+  document.getElementById('testPhotosBtn').disabled = !data.people.some((p) => p.isTest && !p.photoUrl);
   data.people.forEach((p) => {
     const isAdmin = p.id === data.adminPersonId;
     const full = p.firstName + ' ' + p.lastName;
@@ -460,11 +473,61 @@ document.getElementById('testCreateForm').addEventListener('submit', async (e) =
   const count = Number(input.value);
   if (!Number.isInteger(count) || count < 1 || count > 50){ fail(new Error(t('admin.testCountPlaceholder'))); return; }
   btn.disabled = true;
+  testWorking();
   try{
-    await api('POST', '/api/admin/test-people', { count });
+    const data = await api('POST', '/api/admin/test-people', { count });
     input.value = '';
-  }catch(err){ fail(err); }
+    testSaid(t('admin.testMade', { count: data.people.length, photos: data.photos }));
+  }catch(err){ testFailed(err); }
   btn.disabled = false;
+  loadPeople();
+});
+
+// What the last test people button did, under the buttons.
+function testSaid(text, failed){
+  const p = document.getElementById('testResult');
+  p.textContent = text;
+  p.classList.toggle('failed', !!failed);
+}
+const testWorking = () => testSaid(t('admin.testWorking'));
+const testFailed = (err) => testSaid(t('admin.failed') + detail(err && err.message), true);
+
+// One line per site: `done(result)` for one that did it, its error for
+// one that didn't. With one site (events), just what happened.
+function sitesSaid(sites, done){
+  const named = sites.length > 1;
+  testSaid(sites.map((s) => (s.ok ? (named ? s.site + ': ' : '') + done(s) : t('admin.testSiteFailed', { site: s.site, error: s.error }))).join(' '),
+    sites.every((s) => !s.ok));
+}
+
+// Runs one of the site buttons: POST `url`, then `done` for each site.
+async function testOnSites(btn, url, done){
+  btn.disabled = true;
+  testWorking();
+  try{
+    const data = await api('POST', url);
+    sitesSaid(data.sites, done);
+  }catch(err){ testFailed(err); }
+  btn.disabled = testPeopleCount === 0;
+}
+
+document.getElementById('testFriendsBtn').addEventListener('click', (e) => testOnSites(e.currentTarget, '/api/admin/test-people/befriend', (s) => {
+  const n = s.added + s.alreadyFriends;
+  return n === 1 ? t('admin.testFriendsDoneOne') : t('admin.testFriendsDone', { count: n });
+}));
+
+document.getElementById('testEventsBtn').addEventListener('click', (e) => testOnSites(e.currentTarget, '/api/admin/test-people/events', (s) =>
+  (s.created === 1 ? t('admin.testEventsDoneOne') : t('admin.testEventsDone', { count: s.created }))));
+
+document.getElementById('testPhotosBtn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  testWorking();
+  try{
+    const data = await api('POST', '/api/admin/test-people/photos');
+    testSaid(data.without ? t('admin.testPhotosLeft', { count: data.photos, left: data.without })
+      : data.photos === 1 ? t('admin.testPhotosDoneOne') : t('admin.testPhotosDone', { count: data.photos }), data.photos === 0 && data.without > 0);
+  }catch(err){ testFailed(err); }
   loadPeople();
 });
 
@@ -507,7 +570,14 @@ document.getElementById('testDeleteBtn').addEventListener('click', async (e) => 
   if (!confirm(t('admin.testDeleteConfirm', { count: testPeopleCount }))) return;
   const btn = e.currentTarget;
   btn.disabled = true;
-  try{ await api('DELETE', '/api/admin/test-people'); }catch(err){ fail(err); }
+  testWorking();
+  try{
+    const data = await api('DELETE', '/api/admin/test-people');
+    const lines = [t('admin.testDeleted', { count: data.deleted })].concat(data.sites.map((s) => (s.ok
+      ? t('admin.testSiteCleared', { site: s.site, events: s.events || 0, friendships: s.friendships || 0 })
+      : t('admin.testSiteNotCleared', { site: s.site, error: s.error }))));
+    testSaid(lines.join(' '), data.sites.some((s) => !s.ok));
+  }catch(err){ testFailed(err); }
   loadPeople();
 });
 
