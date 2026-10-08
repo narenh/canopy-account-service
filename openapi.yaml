@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
-  title: Canopy accounts, for the apps
+  title: Canopy Accounts, for the apps
   version: 1.0.0
   summary: Sign-in, sign-up and the profile for Canopy's iOS and Android apps.
   description: |
-    Everything a person does on the Canopy account pages, for the native
+    Everything a person does on the Canopy Account pages, for the native
     apps. `docs/native-api.md` in the account service's repo is the guide:
     each flow step by step, what to keep in the Keychain or Keystore, and
     what the errors mean. This file is the contract.
@@ -415,7 +415,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: '`is_admin`: the admin''s account, which would leave nobody to run Canopy accounts.'
+          description: '`is_admin`: the admin''s account, which would leave nobody to run Canopy Accounts.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

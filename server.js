@@ -1144,7 +1144,7 @@ app.post('/api/profile/email/verify', requireSignedIn, emailChangeVerify);
 // to run it.
 const deleteMe = (req, res) => {
   if (req.person.id === store.getAdminPersonId()) {
-    return res.status(409).json({ error: "the admin's account can't be deleted: it would leave nobody to run Canopy accounts", reason: 'is_admin' });
+    return res.status(409).json({ error: "the admin's account can't be deleted: it would leave nobody to run Canopy Accounts", reason: 'is_admin' });
   }
   if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
   const id = req.person.id;
@@ -1331,7 +1331,7 @@ const removePasskey = (req, res) => {
 };
 app.delete('/api/profile/passkeys/:id', requireSignedIn, removePasskey);
 
-// Photos are for browsers signed in to a Canopy account, not the open
+// Photos are for browsers signed in to a Canopy Account, not the open
 // web. Canopy sites show them straight from here: an <img> on any Canopy
 // subdomain sends the cookie, since the browser counts it as the same
 // site. An app has no cookie: it sends its bearer token (cookieOrBearer).

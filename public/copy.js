@@ -52,7 +52,7 @@ const COPY = {
     existingHintUnverified: "This account's email hadn't been confirmed, so whoever set it up may not have been you. Saving a passkey on this phone confirms it and makes it yours alone: the passkeys it was set up with are removed, and its phone, Instagram, Venmo, Cash App and photo are cleared. The name stays, and you can change it on the next page.",
     // Quick sign-up (?quick=1): name, email, passkey; no code, no photo.
     quickHeading: 'Create Account',
-    quickHaveAccount: 'Already have a Canopy account?',
+    quickHaveAccount: 'Already have a Canopy Account?',
     quickSignIn: 'Sign in',
     quickTakenHeading: 'This email has an account',
     quickTakenHint: 'Sign in with your passkey, or get a code at this email.',
@@ -100,7 +100,7 @@ const COPY = {
     changeEmailSend: 'Send code',
     sameEmail: "That's already your email.",
     // Only after the code: whoever typed it owns the inbox.
-    emailUnavailable: 'That email already has a Canopy account. Sign in with it to use that one.',
+    emailUnavailable: 'That email already has a Canopy Account. Sign in with it to use that one.',
     emailChanged: 'Email changed.',
     firstName: 'First name',
     lastName: 'Last name',
@@ -153,7 +153,7 @@ const COPY = {
     // Deleting your own account, at the bottom of the profile.
     deleteHeading: 'Delete my account',
     deleteHint: 'Your account, passkeys and photo are deleted, your calendar link stops working, and you’re signed out everywhere. Canopy sites keep what you did there (an RSVP, a post), shown as “Former member”. This can’t be undone.',
-    deleteAdmin: 'You’re the admin, so this account can’t be deleted: it would leave nobody to run Canopy accounts.',
+    deleteAdmin: 'You’re the admin, so this account can’t be deleted: it would leave nobody to run Canopy Accounts.',
     deleteButton: 'Delete my account',
     deleteSheetHeading: 'Delete your account',
     deletePasskeyHint: 'First, confirm it’s you with your passkey.',
@@ -182,7 +182,7 @@ const COPY = {
     peopleTab: 'People',
     sitesTab: 'Sites',
     settingsTab: 'Settings',
-    peopleHint: 'Everyone with a Canopy account. Deleting someone keeps their history on every site, as a former member.',
+    peopleHint: 'Everyone with a Canopy Account. Deleting someone keeps their history on every site, as a former member.',
     adminTag: 'Admin',
     noPasskey: 'no passkey',
     passkeysOne: '1 passkey',

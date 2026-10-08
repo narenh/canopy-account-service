@@ -19,7 +19,7 @@ test('the code email', async () => {
 test('the address-in-use notice', () => {
   const { subject, text, html } = addressInUseEmail('https://account.canopysf.com/canopy-logo.png');
   assert.equal(subject, 'Someone tried to use this email on Canopy');
-  assert.match(text, /already has a Canopy account, so nothing was changed/);
+  assert.match(text, /already has a Canopy Account, so nothing was changed/);
   assert.doesNotMatch(text + html, /\d{6}/);
   assert.match(html, /<img src="https:\/\/account\.canopysf\.com\/canopy-logo\.png"/);
 });

@@ -2,7 +2,7 @@
   "name": "canopy-account-service",
   "version": "1.0.0",
   "private": true,
-  "description": "Canopy accounts: who someone is, their name and photo, and whether they're signed in, for every Canopy site",
+  "description": "Canopy Accounts: who someone is, their name and photo, and whether they're signed in, for every Canopy site",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

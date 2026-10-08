@@ -197,7 +197,7 @@ who has an account here.
 email already has an account (verified or not) the only honest answers
 are to say so or to fail without a reason. It says so: "this email has
 an account, sign in instead". That tells anyone who tries an email
-whether it has a Canopy account. We accept that leak in exchange for a
+whether it has a Canopy Account. We accept that leak in exchange for a
 sign-up with no code. The tries are counted and limited (see "Guess
 limits"), so it can't be run down a long list of emails.
 
@@ -207,7 +207,7 @@ anyone else gets (`200`, "we sent a code"), from exactly the same work:
 the try is counted, a code is set up on their session, and one email
 goes out. For an address with no account that email is the code. For one
 with an account it's a short notice instead ("someone tried to change
-their Canopy account's email to this one; this email already has an
+their Canopy Account's email to this one; this email already has an
 account, so nothing was changed"), with no code in it. Only the code
 step says the address is taken (`409 email_unavailable`), and the code
 only ever went to that inbox, so whoever can type it is its owner and
@@ -253,7 +253,7 @@ never used Canopy. Sites link to `/?quick=1&return=…`
 (`canopy.quickSignUpUrl()`). The page asks for first name, last name
 and email, then the phone offers to save a passkey, and they're back at
 `?return=`. There's no code and no photo. Under the form, "Already have a
-Canopy account? Sign in" goes to the usual page.
+Canopy Account? Sign in" goes to the usual page.
 
 - **The passkey is still required.** The account is made only once the
   passkey verifies, the same as every other sign-up, so there's never an
@@ -1050,11 +1050,11 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
   sign-out, a rename, a new photo or a newly confirmed email can take up
   to a minute to show on a site. If this service can't be reached, a
   cached answer up to 15 minutes old stands in. Past that, the site
-  answers 503 "Canopy accounts could not be reached". `people()` isn't
+  answers 503 "Canopy Accounts could not be reached". `people()` isn't
   cached: call it once per request.
 - **Photos load straight from `account.canopysf.com`.** Put `photoUrl` in
   an `<img>` on any Canopy page and it works. A photo is only served to a
-  browser signed in to some Canopy account (everyone else gets a 404),
+  browser signed in to some Canopy Account (everyone else gets a 404),
   and an `<img>` on a Canopy subdomain carries the cookie because the
   browser counts it as the same site. An app loads the same URL with its
   bearer token. The site never has to fetch or
@@ -1586,7 +1586,7 @@ including the admin, can get them back from the database: that's the
 point. So:
 
 - Keep both variables in your password manager, the moment they're made,
-  under something like "Canopy account service keys", and again whenever
+  under something like "Canopy Account service keys", and again whenever
   one is rotated (with the old one, until it's retired).
 - Not on the Coolify server only: a lost server is when you'll need them.
   Not in the repo. Not in the same place as the backups (a backup and its
@@ -1764,7 +1764,7 @@ Codes go out through iCloud Mail, from an address on `canopysf.com`
    address you've added, not one that only arrives through the
    catch-all: iCloud only sends as addresses you've actually added.
 2. At **appleid.apple.com → Sign-In and Security → App-Specific
-   Passwords**, make one named "Canopy account service". The Apple ID
+   Passwords**, make one named "Canopy Account service". The Apple ID
    needs two-factor authentication on.
 3. In Coolify:
 

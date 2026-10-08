@@ -1,4 +1,4 @@
-# Canopy accounts for the apps
+# Canopy Accounts for the apps
 
 How the iOS and Android apps sign people in, sign them up, and do
 everything else the account pages do. `openapi.yaml` (served at

@@ -1,4 +1,4 @@
-// Canopy accounts, for a Canopy site (tickets, events, the next one...).
+// Canopy Accounts, for a Canopy site (tickets, events, the next one...).
 // Copy this one file into the site; it has no dependencies (Node 18+, for
 // fetch).
 //
@@ -152,7 +152,7 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000, c
 
   function unreachable(res, err) {
     console.error(`[canopy-account] ${err.message}`);
-    res.status(503).send('Canopy accounts could not be reached. Try again in a minute.');
+    res.status(503).send('Canopy Accounts could not be reached. Try again in a minute.');
   }
 
   async function settle(req, res) {
