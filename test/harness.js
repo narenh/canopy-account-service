@@ -116,6 +116,15 @@ function browser(server, { origin } = {}) {
       const opts = await this.post('/api/auth/register/new', { firstName, lastName });
       if (opts.status !== 200) throw new Error('register/new failed: ' + opts.text);
       return this.makePasskey(opts);
+    },
+
+    // A quick sign-up: name, email, passkey, no code. Returns the
+    // register/verify answer (or the start's, if that was refused).
+    async quickSignUp(email, firstName, lastName, opts) {
+      const start = await this.post('/api/auth/quick/start', { email, firstName, lastName }, opts);
+      if (start.status !== 200) return start;
+      const response = authenticator.register(start.data.options, pageOrigin);
+      return this.post('/api/auth/register/verify', { response }, opts);
     }
   };
 }

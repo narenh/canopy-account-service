@@ -29,6 +29,9 @@
   .email-line .link-btn{margin-left:6px;}
   #emailSheet input.code{margin-bottom:12px;}
   .name-row .field{flex:1;min-width:0;}
+  /* Confirm your email: on top, and with no way to close it. */
+  .verify-banner{border-color:var(--accent);padding:18px 20px;}
+  .verify-banner p{color:var(--text);margin:0 0 12px;}
   /* iPad and up: wider, with contact and payment fields side by side, so
      the form isn't one long column on a big screen. On a phone each
      field keeps its own line (two would be too cramped to type in). */
@@ -40,11 +43,17 @@
   }
 </style>
 </head>
-<body class="mesh-bg">
+<!-- data-return: where ?verify=1 goes once the email is confirmed. The
+     server already checked it's a Canopy page; empty means stay here. -->
+<body class="mesh-bg" data-return="__RETURN_URL__">
   <header class="page-head">
     <a href="/admin" id="adminLink" class="nav-btn hidden" data-copy="profile.admin"></a>
   </header>
   <div class="stack">
+    <div class="card verify-banner hidden" id="verifyBanner">
+      <p data-copy="profile.verifyBanner"></p>
+      <button type="button" id="verifyOpenBtn" data-copy="profile.verifyButton"></button>
+    </div>
     <form class="card" id="profileForm">
       <!-- LOGO_IMG -->
       <h2 data-copy="profile.heading"></h2>
@@ -151,6 +160,27 @@
   </div>
 </div>
 
+<!-- Confirming your email: a code to it, typed back. -->
+<div class="sheet-bg hidden" id="verifySheet">
+  <div class="card">
+    <h2 data-copy="profile.verifyHeading"></h2>
+    <div id="verifyStepSend">
+      <p id="verifyHint"></p>
+      <div class="error" id="verifySendError"></div>
+      <button type="button" id="verifySendBtn" data-copy="profile.verifySend"></button>
+    </div>
+    <form id="verifyStepCode" class="hidden">
+      <p id="verifyCodeHint"></p>
+      <div class="error" id="verifyCodeError"></div>
+      <div class="notice" id="verifyCodeNotice"></div>
+      <input type="text" class="code" id="verifyCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+      <button type="submit" id="verifyCodeBtn">Continue</button>
+      <p style="margin:14px 0 0"><button type="button" class="link-btn" id="verifyResendBtn" data-copy="welcome.resend"></button></p>
+    </form>
+    <p style="margin:14px 0 0"><button type="button" class="link-btn" onclick="closeVerifySheet()">Cancel</button></p>
+  </div>
+</div>
+
 <script src="/copy.js"></script>
 <script src="/vendor/cropperjs-1.6.3/cropper.min.js"></script>
 <script src="/photo-crop.js"></script>
@@ -173,7 +203,10 @@ function formatPhone(phone){
   return m ? '(' + m[1] + ') ' + m[2] + '-' + m[3] : phone;
 }
 
+let me = null;
 function fill(person){
+  me = person;
+  document.getElementById('verifyBanner').classList.toggle('hidden', !!person.emailVerified);
   document.getElementById('emailLine').textContent = person.email;
   document.getElementById('firstName').value = person.firstName;
   document.getElementById('lastName').value = person.lastName;
@@ -394,6 +427,90 @@ document.getElementById('stepCode').addEventListener('submit', (e) => {
   });
 });
 
+// ---------------- Confirming your email ----------------
+// For a quick sign-up, or an email the admin changed. ?verify=1 (where a
+// site sends someone it won't let in yet) opens this straight away, and
+// ?return= is where to go once it's done.
+const RETURN_URL = document.body.getAttribute('data-return');
+
+function openVerifySheet(){
+  document.getElementById('verifyHint').textContent = t('profile.verifyHint', { email: me.email });
+  ['verifySendError', 'verifyCodeError', 'verifyCodeNotice'].forEach((e) => { document.getElementById(e).textContent = ''; });
+  document.getElementById('verifyStepSend').classList.remove('hidden');
+  document.getElementById('verifyStepCode').classList.add('hidden');
+  document.getElementById('verifySheet').classList.remove('hidden');
+}
+function closeVerifySheet(){
+  document.getElementById('verifySheet').classList.add('hidden');
+}
+document.getElementById('verifySheet').addEventListener('click', (e) => { if (e.target.id === 'verifySheet') closeVerifySheet(); });
+document.getElementById('verifyOpenBtn').addEventListener('click', openVerifySheet);
+
+// True once a code is on its way (or there's nothing to confirm).
+async function sendVerifyCode(errorEl){
+  const { res, data } = await postJson('/api/profile/verify/start');
+  if (signedOut(res)) return false;
+  if (res.ok && data.verified){ verifiedNow(me); return false; }
+  if (res.ok) return true;
+  errorEl.textContent = data.reason === 'mail_failed' ? t('welcome.mailFailed')
+    : res.status === 429 ? t('welcome.tooMany')
+    : t('welcome.failed') + detail(data.error || res.status);
+  return false;
+}
+
+document.getElementById('verifySendBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('verifySendError');
+  busy(e.currentTarget, errorEl, async () => {
+    if (!(await sendVerifyCode(errorEl))) return;
+    document.getElementById('verifyCodeHint').textContent = t('welcome.codeHint', { email: me.email });
+    document.getElementById('verifyCode').value = '';
+    document.getElementById('verifyStepSend').classList.add('hidden');
+    document.getElementById('verifyStepCode').classList.remove('hidden');
+    document.getElementById('verifyCode').focus();
+  });
+});
+
+document.getElementById('verifyResendBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('verifyCodeError');
+  const notice = document.getElementById('verifyCodeNotice');
+  notice.textContent = '';
+  busy(e.currentTarget, errorEl, async () => {
+    if (await sendVerifyCode(errorEl)) notice.textContent = t('welcome.resent');
+  });
+});
+
+document.getElementById('verifyCode').addEventListener('input', (e) => {
+  const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+  if (v !== e.target.value) e.target.value = v;
+  if (v.length === 6) document.getElementById('verifyStepCode').requestSubmit();
+});
+
+document.getElementById('verifyStepCode').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('verifyCodeError');
+  document.getElementById('verifyCodeNotice').textContent = '';
+  busy(document.getElementById('verifyCodeBtn'), errorEl, async () => {
+    const { res, data } = await postJson('/api/profile/verify/check', { code: document.getElementById('verifyCode').value });
+    if (signedOut(res)) return;
+    if (!res.ok){
+      errorEl.textContent = data.reason === 'wrong_code' ? t('welcome.wrongCode')
+        : data.reason === 'expired' ? t('welcome.codeExpired')
+        : res.status === 429 ? t('welcome.tooMany')
+        : t('welcome.failed') + detail(data.error || res.status);
+      return;
+    }
+    verifiedNow(data.person);
+  });
+});
+
+// Confirmed: back to the site that asked, or stay here and say so.
+function verifiedNow(person){
+  if (RETURN_URL){ window.location.href = RETURN_URL; return; }
+  closeVerifySheet();
+  fill(person);
+  document.getElementById('emailNotice').textContent = t('profile.verified');
+}
+
 document.getElementById('signOutBtn').addEventListener('click', (e) => {
   busy(e.currentTarget, null, async () => {
     await postJson('/api/signout');
@@ -407,6 +524,10 @@ document.getElementById('signOutBtn').addEventListener('click', (e) => {
   if (!person){ window.location.href = '/'; return; }
   fill(person);
   loadPasskeys();
+  if (new URLSearchParams(window.location.search).has('verify')){
+    if (!person.emailVerified) openVerifySheet();
+    else if (RETURN_URL) window.location.href = RETURN_URL;
+  }
 })();
 </script>
 </body>

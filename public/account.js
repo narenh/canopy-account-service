@@ -52,7 +52,7 @@ async function finishRegistration(options, errorEl){
   }
   const { res, data } = await postJson('/api/auth/register/verify', { response });
   if (res.ok) return data;
-  errorEl.textContent = data.reason === 'conflict' ? t('welcome.emailTaken')
+  errorEl.textContent = data.reason === 'conflict' || data.reason === 'email_has_account' ? t('welcome.emailTaken')
     : data.reason === 'expired' ? t('welcome.expired')
     : data.reason === 'bad_link' ? t('setup.badLink')
     : t('welcome.failed') + detail(data.error || res.status);

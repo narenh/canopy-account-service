@@ -44,6 +44,9 @@
   .who .sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .tag{font-size:10px;font-weight:700;text-transform:uppercase;color:var(--on-accent);background:var(--accent);border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:2px;}
   .tag.off{background:rgba(0,0,0,.35);color:#ffffff;}
+  /* A site's switches, under its name. */
+  .switch{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-top:6px;cursor:pointer;}
+  .switch input{margin:0;width:16px;height:16px;accent-color:var(--accent);}
   .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
   .actions button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .inline-form{display:flex;gap:8px;margin-bottom:14px;}
@@ -269,6 +272,13 @@ async function loadPeople(){
       tag.textContent = t('admin.adminTag');
       name.appendChild(tag);
     }
+    // A quick sign-up, or an email changed here, that no code has proven.
+    if (!p.emailVerified){
+      const tag = document.createElement('span');
+      tag.className = 'tag off';
+      tag.textContent = t('admin.unverifiedTag');
+      name.appendChild(tag);
+    }
     const sub = document.createElement('div');
     sub.className = 'sub';
     sub.textContent = p.email + ' · ' + (p.passkeyCount === 0 ? t('admin.noPasskey')
@@ -314,7 +324,8 @@ document.getElementById('editSheet').addEventListener('click', (e) => { if (e.ta
 
 const EDIT_ERRORS = {
   bad_email: 'welcome.badEmail', conflict: 'admin.emailTaken', bad_phone: 'profile.badPhone',
-  bad_instagram: 'profile.badInstagram', bad_venmo: 'welcome.badVenmo', bad_cashapp: 'profile.badCashapp'
+  bad_instagram: 'profile.badInstagram', bad_venmo: 'welcome.badVenmo', bad_cashapp: 'profile.badCashapp',
+  own_email: 'admin.ownEmail'
 };
 document.getElementById('editForm').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -386,6 +397,7 @@ async function loadSites(){
     sub.className = 'sub';
     sub.textContent = a.lastUsedAt ? t('admin.lastUsed', { date: formatDate(a.lastUsedAt) }) : t('admin.neverUsed');
     who.append(name, sub);
+    who.appendChild(siteSwitch(a, 'allowsUnverified', 'admin.allowsUnverified'));
     const actions = document.createElement('div');
     actions.className = 'actions';
     actions.appendChild(button(t('admin.rekey'), 'secondary', async (b) => {
@@ -408,6 +420,25 @@ async function loadSites(){
     row.append(who, actions);
     list.appendChild(row);
   });
+}
+
+// A checkbox for one of a site's switches, saved as soon as it's ticked.
+function siteSwitch(a, field, copyKey){
+  const label = document.createElement('label');
+  label.className = 'switch';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = !!a[field];
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    try{ await api('PATCH', '/api/admin/apps/' + a.id, { [field]: box.checked }); }
+    catch(e){ fail(e); box.checked = !box.checked; }
+    box.disabled = false;
+  });
+  const text = document.createElement('span');
+  text.textContent = t(copyKey);
+  label.append(box, text);
+  return label;
 }
 
 document.getElementById('addSiteForm').addEventListener('submit', async (e) => {

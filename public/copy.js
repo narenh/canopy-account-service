@@ -46,6 +46,19 @@ const COPY = {
     existingHint: "Save a passkey on this phone and you're in. It'll work on every Canopy site.",
     existingHintHasPasskey: 'Sign in with your passkey, or save a new one on this phone (a new phone, or a lost one).',
     newPasskey: 'Save a passkey on this phone',
+    // A quick sign-up's account, before anyone proved its email. A passkey
+    // saved here takes it over (see "Quick sign-up" in the README).
+    existingHintUnverified: "This account's email hadn't been confirmed. Saving a passkey on this phone confirms it, and removes the passkeys the account was set up with, so only you can get in.",
+    // Quick sign-up (?quick=1): name, email, passkey; no code, no photo.
+    quickHeading: 'Create Account',
+    quickHint: "Your name and email, then a passkey. That's all.",
+    quickHaveAccount: 'Already have a Canopy account?',
+    quickSignIn: 'Sign in',
+    quickTakenHeading: 'This email has an account',
+    quickTakenHint: 'Sign in with your passkey, or get a code at this email.',
+    quickCode: 'Email me a code',
+    quickOtherEmail: 'Use a different email',
+    quickTooMany: 'Too many sign-ups right now. Try again later, or sign in with your email.',
     // Passkey trouble.
     tooMany: 'Too many tries. Wait a few minutes.',
     passkeyExists: 'This phone already has a passkey for this account. Sign in with it instead.',
@@ -113,7 +126,15 @@ const COPY = {
     added: 'Passkey added.',
     signOut: 'Sign out of all Canopy sites',
     // The admin's way back from their own profile.
-    admin: 'Back to manager'
+    admin: 'Back to manager',
+    // An account whose email isn't proven yet: a quick sign-up, or an
+    // email the admin changed. The banner can't be closed.
+    verifyBanner: 'Confirm your email. Until you do, some Canopy sites treat you as signed out.',
+    verifyButton: 'Confirm email',
+    verifyHeading: 'Confirm your email',
+    verifyHint: "We'll send a 6-digit code to {email}.",
+    verifySend: 'Send code',
+    verified: 'Email confirmed.'
   },
 
   // ---------------- The admin, at /admin ----------------
@@ -131,7 +152,10 @@ const COPY = {
     editProfile: 'Edit profile',
     editHeading: 'Edit {name}',
     email: 'Email',
-    emailHint: "Changing someone's email counts it as unconfirmed until they next get a code there.",
+    emailHint: "Changing someone's email marks it unconfirmed until they type a code sent there. Until then, sites that need a confirmed email treat them as signed out.",
+    unverifiedTag: 'Unverified',
+    ownEmail: 'Change your own email from your profile.',
+    allowsUnverified: 'Allows quick (unverified) accounts',
     emailTaken: 'That email already has an account.',
     resetPasskeys: 'Reset passkeys',
     setupLink: 'Setup link',

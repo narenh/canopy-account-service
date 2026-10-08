@@ -47,6 +47,40 @@
     <p class="small-link hidden" id="adminSetupLink"><button type="button" onclick="showAdminSetup()" data-copy="welcome.adminSetupLink"></button></p>
   </form>
 
+  <!-- Quick sign-up (?quick=1, where a site that allows it sends someone
+       new): name, email and a passkey. No code and no photo; the email is
+       proven later, from the profile. -->
+  <form class="card hidden" id="quickForm">
+    <!-- LOGO_IMG -->
+    <h2 data-copy="welcome.quickHeading"></h2>
+    <p data-copy="welcome.quickHint"></p>
+    <div class="name-row">
+      <input type="text" id="quickFirstName" placeholder="First name" autocomplete="given-name" maxlength="60">
+      <input type="text" id="quickLastName" placeholder="Last name" autocomplete="family-name" maxlength="60">
+    </div>
+    <input type="email" id="quickEmail" placeholder="Email" autocomplete="email" autocapitalize="off" spellcheck="false">
+    <div class="error" id="quickError"></div>
+    <button type="submit" id="quickBtn">Continue</button>
+    <p class="hint" data-copy="welcome.signUpHint"></p>
+    <p class="for-email" style="margin:14px 0 0">
+      <span data-copy="welcome.quickHaveAccount"></span>
+      <button type="button" class="link-btn" onclick="backToEmail()" data-copy="welcome.quickSignIn"></button>
+    </p>
+  </form>
+
+  <!-- Quick sign-up with an email that already has an account: sign in to
+       it instead, with its passkey or a code. -->
+  <div class="card hidden" id="quickTakenCard">
+    <!-- LOGO_IMG -->
+    <h2 data-copy="welcome.quickTakenHeading"></h2>
+    <p class="for-email"><span class="email-label"></span></p>
+    <p data-copy="welcome.quickTakenHint"></p>
+    <div class="error" id="quickTakenError"></div>
+    <button type="button" class="passkey-btn" id="quickTakenSignInBtn" data-copy="welcome.signIn"></button>
+    <button type="button" class="secondary" id="quickTakenCodeBtn" style="margin-top:10px" data-copy="welcome.quickCode"></button>
+    <p class="for-email" style="margin:14px 0 0"><button type="button" class="link-btn" onclick="showCard('quickForm')" data-copy="welcome.quickOtherEmail"></button></p>
+  </div>
+
   <!-- Step 2: the emailed code. -->
   <form class="card hidden" id="codeForm">
     <!-- LOGO_IMG -->
@@ -129,7 +163,7 @@ function enter(){
   window.location.href = adminFlow ? '/admin' : (RETURN_URL || '/');
 }
 
-const CARDS = ['adminSetupForm', 'emailForm', 'codeForm', 'profileForm', 'existingCard'];
+const CARDS = ['adminSetupForm', 'emailForm', 'codeForm', 'profileForm', 'existingCard', 'quickForm', 'quickTakenCard'];
 function showCard(id){
   CARDS.forEach(c => document.getElementById(c).classList.toggle('hidden', c !== id));
   document.querySelectorAll('.email-label').forEach(el => { el.textContent = email; });
@@ -159,6 +193,13 @@ if (new URLSearchParams(window.location.search).has('email')){
   btn.textContent = 'Continue';
   document.getElementById('tagline').textContent = t('welcome.taglineEmail');
   document.getElementById('email').focus();
+}
+
+// ?quick: a site that allows quick sign-ups sent someone new here. The
+// quick form is the page, with a way into the usual sign-in under it.
+if (new URLSearchParams(window.location.search).has('quick')){
+  showCard('quickForm');
+  document.getElementById('quickFirstName').focus();
 }
 
 document.getElementById('signInBtn').addEventListener('click', (e) => {
@@ -236,7 +277,8 @@ function afterVerified(data){
     return;
   }
   document.getElementById('existingHeading').textContent = t('welcome.welcomeBack', { name: data.firstName });
-  document.getElementById('existingHint').textContent = t(data.hasPasskey ? 'welcome.existingHintHasPasskey' : 'welcome.existingHint');
+  document.getElementById('existingHint').textContent = t(data.unverified ? 'welcome.existingHintUnverified'
+    : data.hasPasskey ? 'welcome.existingHintHasPasskey' : 'welcome.existingHint');
   document.getElementById('existingError').textContent = '';
   document.getElementById('existingSignInBtn').classList.toggle('hidden', !data.hasPasskey);
   document.getElementById('newPasskeyBtn').classList.toggle('secondary', !!data.hasPasskey);
@@ -309,6 +351,47 @@ document.getElementById('profileForm').addEventListener('submit', (e) => {
     await fetch('/api/profile/photo', { method: 'POST', body: form }).catch(() => {});
     enter();
   });
+});
+
+// ---------------- Quick sign-up: name, email, passkey ----------------
+
+document.getElementById('quickForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('quickError');
+  if (!document.getElementById('quickFirstName').value.trim() || !document.getElementById('quickLastName').value.trim()){
+    errorEl.textContent = t('welcome.nameRequired');
+    return;
+  }
+  busy(document.getElementById('quickBtn'), errorEl, async () => {
+    const { res, data } = await postJson('/api/auth/quick/start', {
+      firstName: document.getElementById('quickFirstName').value,
+      lastName: document.getElementById('quickLastName').value,
+      email: document.getElementById('quickEmail').value
+    });
+    if (data.reason === 'email_has_account'){
+      email = data.email;
+      document.getElementById('quickTakenError').textContent = '';
+      showCard('quickTakenCard');
+      return;
+    }
+    if (data.reason === 'bad_email'){ errorEl.textContent = t('welcome.badEmail'); return; }
+    if (data.reason === 'names_required'){ errorEl.textContent = t('welcome.nameRequired'); return; }
+    if (res.status === 429){ errorEl.textContent = t('welcome.quickTooMany'); return; }
+    if (!res.ok){ errorEl.textContent = t('welcome.failed') + detail(data.error || res.status); return; }
+    if (await finishRegistration(data.options, errorEl)) enter();
+  });
+});
+
+document.getElementById('quickTakenSignInBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('quickTakenError');
+  busy(e.currentTarget, errorEl, async () => { if (await signInWithPasskey(errorEl)) enter(); });
+});
+
+// A code to that email: the usual way in, already filled in.
+document.getElementById('quickTakenCodeBtn').addEventListener('click', () => {
+  document.getElementById('email').value = email;
+  showCard('emailForm');
+  document.getElementById('emailForm').requestSubmit();
 });
 
 // ---------------- First run: the setup password ----------------

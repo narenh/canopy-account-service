@@ -177,8 +177,11 @@ function adminSetupOpen() {
   return ADMIN_RECOVERY || !store.getAdminPersonId();
 }
 
+// The admin's email is always proven (first run proves it with the setup
+// password, and Edit profile won't change the admin's own), but the check
+// is here too: an unverified account never opens /admin.
 function isAdmin(req) {
-  return !!req.person && req.person.id === store.getAdminPersonId();
+  return !!req.person && !!req.person.emailVerifiedAt && req.person.id === store.getAdminPersonId();
 }
 
 function hasAdminSetupGrant(req) {
@@ -287,12 +290,14 @@ function cleanCashapp(raw) {
 const BAD_INSTAGRAM = { error: 'an Instagram username is letters, numbers, . and _ only', reason: 'bad_instagram' };
 const BAD_CASHAPP = { error: 'a $cashtag is letters, numbers, - and _ only, with at least one letter', reason: 'bad_cashapp' };
 
-// Everything about a person a site gets: /api/session for the visitor,
-// and the account service's own pages.
+// Everything about a person a site gets: /api/session for the visitor
+// themself, and the account service's own pages. Contact details are in
+// here, so it's only ever about the person asking (or for the admin).
 function personView(req, p) {
   return {
     id: p.id,
     email: p.email,
+    emailVerified: !!p.emailVerifiedAt,
     firstName: p.firstName,
     lastName: p.lastName,
     shortName: p.shortName,
@@ -324,10 +329,17 @@ app.get('/api/me', attachSession(false), (req, res) => res.json(meView(req)));
 // - The setup password: 8 per browser, 40 per address, 100 an hour overall.
 // - Setup links: 40 wrong per address per 15 minutes. A link's code is
 //   32 random bytes, so this is about noise, not guessing.
+// - Quick sign-ups send no email, so nothing like the code limits holds
+//   them back. Each one tried says whether an email has an account, so
+//   tries are counted: 10 per browser per 15 minutes, 20 per address and
+//   200 across everyone an hour. Accounts actually made: 10 per address
+//   and 50 across everyone an hour.
 const codeSendLimits = guessLimits({ perWho: [5, 60 * 60 * 1000], perIp: [20, 60 * 60 * 1000], overall: [100, 60 * 60 * 1000] });
 const codeGuessLimits = guessLimits({ perWho: [10, 15 * 60 * 1000], perIp: [40, 15 * 60 * 1000], overall: [300, 60 * 60 * 1000] });
 const setupPasswordLimits = guessLimits({ perWho: [8, 15 * 60 * 1000], perIp: [40, 15 * 60 * 1000], overall: [100, 60 * 60 * 1000] });
 const setupLinkIpLimiter = attemptLimiter(40, 15 * 60 * 1000);
+const quickTryLimits = guessLimits({ perWho: [10, 15 * 60 * 1000], perIp: [20, 60 * 60 * 1000], overall: [200, 60 * 60 * 1000] });
+const quickMadeLimits = guessLimits({ perIp: [10, 60 * 60 * 1000], overall: [50, 60 * 60 * 1000] });
 
 function tooMany(res) {
   return res.status(429).json({ error: 'too many tries -- wait a few minutes', reason: 'rate_limited' });
@@ -435,7 +447,12 @@ app.post('/api/auth/admin-setup', attachSession(true), (req, res) => {
 function emailState(email) {
   const person = store.getPersonByEmail(email);
   if (!person) return { state: 'new', email };
-  return { state: 'existing', email, firstName: person.firstName, hasPasskey: store.passkeysOf(person.id).length > 0 };
+  return {
+    state: 'existing', email, firstName: person.firstName, hasPasskey: store.passkeysOf(person.id).length > 0,
+    // A quick sign-up nobody has proven the email of yet: a new passkey
+    // here takes the account over (see register/verify).
+    unverified: !person.emailVerifiedAt
+  };
 }
 
 // Sends a code to the email. After the setup password, the admin's own
@@ -525,6 +542,43 @@ app.post('/api/auth/register/existing', attachSession(false), handle(async (req,
   });
   store.setPending(req.sess.idHash, {
     challenge: options.challenge, kind: 'register', personId: person.id, profile: { mode: 'existing', email }
+  });
+  res.json({ options });
+}));
+
+// ---------------- Quick sign-up ----------------
+//
+// For someone opening a link from a site that allows unverified accounts
+// (events): first and last name, email, and a passkey, with no code and
+// no photo. The account is only made once the passkey exists, like any
+// other, but its email isn't proven: it's unverified until its owner
+// types a code (their profile, or signing in by code), and sites that
+// don't allow unverified accounts see them as signed out until then.
+//
+// An email that already has an account, verified or not, is told so.
+// That says the account exists, which the code flow never does. It's the
+// price of a sign-up with no code: the alternative is quietly making a
+// second account or failing with no reason. The tries are limited (see
+// "Guess limits"). Only once there's an admin.
+
+app.post('/api/auth/quick/start', attachSession(true), handle(async (req, res) => {
+  const rpID = requirePasskeyRp(req, res);
+  if (!rpID) return;
+  if (!store.getAdminPersonId()) return res.status(403).json({ error: 'set up the admin account first', reason: 'setup_required' });
+  const body = req.body || {};
+  const names = cleanNames(body);
+  if (names.error) return res.status(400).json({ error: names.error, reason: 'names_required' });
+  const email = cleanEmail(body.email);
+  if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
+  if (quickTryLimits.blocked(req, req.sess.idHash) || quickMadeLimits.blocked(req)) return tooMany(res);
+  quickTryLimits.hit(req, req.sess.idHash);
+  if (store.getPersonByEmail(email)) {
+    return res.status(409).json({ error: 'that email has an account -- sign in instead', reason: 'email_has_account', email });
+  }
+  const id = crypto.randomUUID();
+  const options = await registrationOptions(rpID, { userId: id, email, displayName: `${names.firstName} ${names.lastName}` });
+  store.setPending(req.sess.idHash, {
+    challenge: options.challenge, kind: 'register', profile: { mode: 'quick', id, email, ...names }
   });
   res.json({ options });
 }));
@@ -630,12 +684,21 @@ app.post('/api/auth/register/verify', attachSession(false), handle(async (req, r
     const made = store.createPersonWithPasskey(pending.profile, cred);
     if (!made.ok) return res.status(409).json({ error: 'that email already has an account', reason: 'conflict' });
     personId = made.person.id;
+  } else if (mode === 'quick') {
+    if (!store.getAdminPersonId()) return res.status(403).json({ error: 'set up the admin account first', reason: 'setup_required' });
+    if (quickMadeLimits.blocked(req)) return tooMany(res);
+    const { id, email, firstName, lastName } = pending.profile;
+    const made = store.createPersonWithPasskey({ id, email, firstName, lastName, unverified: true }, cred);
+    if (!made.ok) return res.status(409).json({ error: 'that email has an account -- sign in instead', reason: 'email_has_account', email });
+    quickMadeLimits.hit(req);
+    personId = made.person.id;
   } else if (mode === 'existing') {
     const person = store.getPerson(personId);
     // The proven email still has to be this person's.
     if (!person || store.verifiedEmail(req.sess.idHash) !== person.email) return res.status(400).json(EXPIRED);
-    store.addPasskey(personId, cred);
-    store.markEmailVerified(personId);
+    // The code proved the email, so the account is verified now -- and if
+    // it wasn't before, it's this inbox's owner's alone (lib/db.js).
+    if (!store.addPasskeyProvingEmail(personId, cred, req.sess.idHash).ok) return res.status(400).json(EXPIRED);
   } else if (mode === 'link') {
     if (!store.useSetupLink(pending.profile.codeHash, personId)) {
       return res.status(404).json({ error: 'that link has been used or has run out', reason: 'bad_link' });
@@ -830,6 +893,50 @@ app.post('/api/profile/email/verify', requireSignedIn, handle(async (req, res) =
   res.json(meView(req));
 }));
 
+// ---------------- Proving your own email ----------------
+//
+// A quick sign-up (or someone whose email the admin changed) proves the
+// email they have from their profile: a code sent there, typed back. The
+// same codes and limits as signing in. Nothing else changes: their
+// passkeys are already the ones they signed in with.
+
+app.post('/api/profile/verify/start', requireSignedIn, handle(async (req, res) => {
+  const email = req.person.email;
+  if (req.person.emailVerifiedAt) return res.json({ ok: true, verified: true, email });
+  if (codeSendLimits.blocked(req, email)) return tooMany(res);
+  codeSendLimits.hit(req, email);
+  const code = store.issueEmailCode(req.sess.idHash, email);
+  try {
+    await mailer.sendCode(email, code, emailLogoUrl(req));
+  } catch (err) {
+    console.error(`[canopy-account] sending a code failed: ${err.message}`);
+    return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
+  }
+  res.json({ ok: true, verified: false, email });
+}));
+
+app.post('/api/profile/verify/check', requireSignedIn, (req, res) => {
+  const email = store.codeEmail(req.sess.idHash);
+  // The code waiting here has to be for their own email (not one meant for
+  // changing it).
+  if (!email || email !== req.person.email) return res.status(400).json({ error: 'that code has run out -- send a new one', reason: 'expired' });
+  if (codeGuessLimits.blocked(req, email)) return tooMany(res);
+  const result = store.checkEmailCode(req.sess.idHash, String((req.body || {}).code || '').replace(/\s+/g, ''));
+  if (result.outcome === 'expired') return res.status(400).json({ error: 'that code has run out -- send a new one', reason: 'expired' });
+  if (result.outcome === 'wrong') {
+    codeGuessLimits.hit(req, email);
+    return res.status(403).json({ error: "that isn't the code", reason: 'wrong_code' });
+  }
+  // Their email could have been changed while the code was out.
+  const person = store.getPerson(req.person.id);
+  if (!person || person.email !== result.email) return res.status(400).json({ error: 'that code has run out -- send a new one', reason: 'expired' });
+  store.markEmailVerified(person.id);
+  // The proven address isn't left lying around on the session.
+  store.signIn(req.sess.idHash, person.id);
+  req.person = store.getPerson(person.id);
+  res.json(meView(req));
+});
+
 // ---------------- Profile ----------------
 
 // The cropped photo the page makes is a few dozen KB; this is only a
@@ -962,11 +1069,21 @@ app.get('/api/admin/people', (req, res) => {
 });
 
 // The admin's "Edit profile": every field the person can set, and their
-// email (a changed one counts as unverified until they type a code at it).
+// email. A changed email is unverified until its owner types a code sent
+// there, so sites that don't allow unverified accounts see them as signed
+// out until then: the admin can't vouch for an address on someone's behalf.
+//
+// The admin's own email isn't changed here: it would leave the admin
+// unverified, and an unverified account can't open this page. Their own
+// profile changes it, with a passkey and a code, like anyone's.
 app.patch('/api/admin/people/:id', (req, res) => {
-  if (!store.getPerson(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const current = store.getPerson(req.params.id);
+  if (!current) return res.status(404).json({ error: 'not found' });
   const { changes, error } = profileChanges(req.body || {}, { withEmail: true });
   if (error) return res.status(400).json(error);
+  if (req.params.id === store.getAdminPersonId() && changes.email !== undefined && changes.email !== current.email) {
+    return res.status(409).json({ error: 'change your own email from your profile', reason: 'own_email' });
+  }
   const person = applyProfileChanges(req.params.id, changes);
   if (person && person.conflict) return res.status(409).json({ error: 'that email already has an account', reason: 'conflict' });
   if (!person) return res.status(404).json({ error: 'not found' });
@@ -1025,6 +1142,16 @@ app.post('/api/admin/apps/:id/rekey', (req, res) => {
   res.json(result);
 });
 
+// A site's switches: { allowsUnverified }.
+app.patch('/api/admin/apps/:id', (req, res) => {
+  const body = req.body || {};
+  const settings = {};
+  if (body.allowsUnverified !== undefined) settings.allowsUnverified = !!body.allowsUnverified;
+  const site = store.setAppSettings(req.params.id, settings);
+  if (!site) return res.status(404).json({ error: 'not found' });
+  res.json({ app: site });
+});
+
 app.post('/api/admin/apps/:id/revoke', (req, res) => {
   if (!store.revokeApp(req.params.id)) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
@@ -1043,11 +1170,19 @@ function requireSite(req, res, next) {
   next();
 }
 
-// Who the visitor is. The site passes their canopy_session cookie value
-// in X-Canopy-Session, and its own host in X-Canopy-Site-Host so the
-// renewed cookie (when one's due) is made for the right domain. The
-// answer: { person } (null if not signed in), and `renewCookie`, a
-// Set-Cookie value the site should send back to the visitor as is.
+// Who the visitor is. The site passes their canopy_session value in
+// X-Canopy-Session (from the cookie, or an app's bearer token), and its
+// own host in X-Canopy-Site-Host so the renewed cookie (when one's due) is
+// made for the right domain. The answer: { person } (null if not signed
+// in), and `renewCookie`, a Set-Cookie value the site should send back to
+// the visitor as is. No X-Canopy-Site-Host, no renewCookie: an app's
+// token has no cookie to renew.
+//
+// Someone whose email isn't proven is only signed in on a site the admin
+// lets unverified accounts into. Anywhere else the answer is { person:
+// null, unverified: true }, so the site can send them to prove it rather
+// than to sign in again. That's decided here, never by the site. The
+// session is still theirs, so it's kept alive and renewed as usual.
 app.get('/api/session', requireSite, (req, res) => {
   res.set('Cache-Control', 'no-store');
   const token = session.readToken(`${session.COOKIE}=${req.get('x-canopy-session') || ''}`);
@@ -1055,9 +1190,12 @@ app.get('/api/session', requireSite, (req, res) => {
   const person = s && s.personId ? store.getPerson(s.personId) : null;
   if (!person) return res.json({ person: null });
   store.touchSession(s.idHash, s.lastSeenAt);
-  const body = { person: personView(req, person) };
-  if (session.needsRenewal(s)) {
-    body.renewCookie = session.cookieHeader(token, req.get('x-canopy-site-host') || '');
+  const body = person.emailVerifiedAt || req.site.allowsUnverified
+    ? { person: personView(req, person) }
+    : { person: null, unverified: true };
+  const siteHost = req.get('x-canopy-site-host');
+  if (siteHost && session.needsRenewal(s)) {
+    body.renewCookie = session.cookieHeader(token, siteHost);
     store.cookieRenewed(s.idHash);
   }
   res.json(body);
@@ -1152,9 +1290,19 @@ app.get('/', attachSession(false), (req, res) => {
   renderPage(res, 'welcome.html', { returnUrl: back || '' });
 });
 
+// ?verify=1 opens straight into proving the email, and ?return= (a
+// Canopy page) is where to go once it's done: where a site sends someone
+// it won't let in unverified. Already verified, they go straight back.
+// Signed out, they sign in first and come back here.
 app.get('/profile', attachSession(false), (req, res) => {
-  if (!req.person) return res.redirect('/');
-  renderPage(res, 'profile.html');
+  const back = safeReturn(req.query.return);
+  if (!req.person) {
+    if (req.query.verify === undefined) return res.redirect('/');
+    const here = `${publicBase(req)}/profile?verify=1${back ? `&return=${encodeURIComponent(back)}` : ''}`;
+    return res.redirect('/?return=' + encodeURIComponent(here));
+  }
+  if (req.query.verify !== undefined && req.person.emailVerifiedAt && back) return res.redirect(back);
+  renderPage(res, 'profile.html', { returnUrl: back || '' });
 });
 
 app.get('/setup/:code', (req, res) => renderPage(res, 'setup.html'));
