@@ -32,6 +32,11 @@
   /* Confirm your email: on top, and with no way to close it. */
   .verify-banner{border-color:var(--accent);padding:18px 20px;}
   .verify-banner p{color:var(--text);margin:0 0 12px;}
+  /* Whether a phone number or Instagram finds you: a checkbox and what
+     it means, left-aligned under the fields it's about. */
+  .find-me{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.35;text-align:left;margin:4px 0 4px;cursor:pointer;}
+  .find-me input{width:18px;height:18px;margin:1px 0 0;flex:0 0 auto;accent-color:var(--accent);}
+  .find-hint{text-align:left;font-size:12px;margin:0 0 14px 28px;}
   /* iPad and up: wider, with contact and payment fields side by side, so
      the form isn't one long column on a big screen. On a phone each
      field keeps its own line (two would be too cramped to type in). */
@@ -117,6 +122,8 @@
           </label>
         </div>
       </div>
+      <label class="find-me"><input type="checkbox" id="findable"><span data-copy="profile.findable"></span></label>
+      <p class="find-hint" data-copy="profile.findableHint"></p>
       <div class="error" id="profileError"></div>
       <div class="notice" id="profileNotice"></div>
       <button type="submit" id="saveBtn">Save</button>
@@ -214,6 +221,7 @@ function fill(person){
   document.getElementById('phone').value = formatPhone(person.phone);
   document.getElementById('instagram').value = person.instagram || '';
   document.getElementById('cashapp').value = person.cashapp || '';
+  document.getElementById('findable').checked = !!person.findable;
   document.getElementById('adminLink').classList.toggle('hidden', !person.isAdmin);
   if (person.photoUrl) picker.show(person.photoUrl);
 }
@@ -255,7 +263,8 @@ document.getElementById('profileForm').addEventListener('submit', (e) => {
       venmoHandle: document.getElementById('venmoHandle').value,
       phone: document.getElementById('phone').value,
       instagram: document.getElementById('instagram').value,
-      cashapp: document.getElementById('cashapp').value
+      cashapp: document.getElementById('cashapp').value,
+      findable: document.getElementById('findable').checked
     });
     if (signedOut(res)) return;
     if (data.reason === 'bad_venmo'){ errorEl.textContent = t('welcome.badVenmo'); return; }

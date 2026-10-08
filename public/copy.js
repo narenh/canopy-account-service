@@ -111,6 +111,9 @@ const COPY = {
     badInstagram: 'An Instagram username is letters, numbers, . and _ only.',
     badCashapp: 'A $cashtag is letters, numbers, - and _ only, with at least one letter.',
     badPhone: "That doesn't look like a phone number. Outside the US and Canada, start with + and the country code.",
+    // On unless they turn it off (FINDABLE_BY_DEFAULT in lib/db.js).
+    findable: 'Let people who know your phone number or Instagram find you',
+    findableHint: "They'll see your name and photo. Never your number, email or anything else.",
     saved: 'Saved.',
     failed: "Couldn't save. Try again.",
     photoHint: 'Tap your photo to change it.',
@@ -156,6 +159,7 @@ const COPY = {
     unverifiedTag: 'Unverified',
     ownEmail: 'Change your own email from your profile.',
     allowsUnverified: 'Allows quick (unverified) accounts',
+    allowsLookup: 'Can find people by phone number or Instagram',
     emailTaken: 'That email already has an account.',
     resetPasskeys: 'Reset passkeys',
     setupLink: 'Setup link',

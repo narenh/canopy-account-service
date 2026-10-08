@@ -398,6 +398,7 @@ async function loadSites(){
     sub.textContent = a.lastUsedAt ? t('admin.lastUsed', { date: formatDate(a.lastUsedAt) }) : t('admin.neverUsed');
     who.append(name, sub);
     who.appendChild(siteSwitch(a, 'allowsUnverified', 'admin.allowsUnverified'));
+    who.appendChild(siteSwitch(a, 'allowsLookup', 'admin.allowsLookup'));
     const actions = document.createElement('div');
     actions.className = 'actions';
     actions.appendChild(button(t('admin.rekey'), 'secondary', async (b) => {

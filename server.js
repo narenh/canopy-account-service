@@ -305,8 +305,17 @@ function personView(req, p) {
     venmo: p.venmo,
     phone: p.phone,
     instagram: p.instagram,
-    cashapp: p.cashapp
+    cashapp: p.cashapp,
+    findable: p.findable
   };
+}
+
+// Everything anyone else -- another person, a site asking about someone
+// who isn't the visitor -- ever gets about a person: /api/people and the
+// lookup. Never their email, phone, Instagram, Venmo or Cash App. Knowing
+// a number finds the account; the account never gives up its numbers.
+function publicPersonView(req, p) {
+  return { id: p.id, firstName: p.firstName, lastName: p.lastName, shortName: p.shortName, photoUrl: photoUrlFor(req, p) };
 }
 
 function meView(req) {
@@ -969,6 +978,8 @@ function profileChanges(body, { withEmail = false } = {}) {
     if (value === false) return { error: bad };
     changes[name] = value;
   }
+  // "Let people who know your phone number or Instagram find you."
+  if (body.findable !== undefined) changes.findable = body.findable === true;
   if (withEmail && body.email !== undefined) {
     const email = cleanEmail(body.email);
     if (!email) return { error: { error: 'enter a valid email', reason: 'bad_email' } };
@@ -990,6 +1001,7 @@ function applyProfileChanges(id, changes) {
   if (changes.phone !== undefined) person = store.setPersonPhone(id, changes.phone);
   if (changes.instagram !== undefined) person = store.setPersonInstagram(id, changes.instagram);
   if (changes.cashapp !== undefined) person = store.setPersonCashapp(id, changes.cashapp);
+  if (changes.findable !== undefined) person = store.setPersonFindable(id, changes.findable);
   return person;
 }
 
@@ -1142,11 +1154,12 @@ app.post('/api/admin/apps/:id/rekey', (req, res) => {
   res.json(result);
 });
 
-// A site's switches: { allowsUnverified }.
+// A site's switches: { allowsUnverified, allowsLookup }.
 app.patch('/api/admin/apps/:id', (req, res) => {
   const body = req.body || {};
   const settings = {};
   if (body.allowsUnverified !== undefined) settings.allowsUnverified = !!body.allowsUnverified;
+  if (body.allowsLookup !== undefined) settings.allowsLookup = !!body.allowsLookup;
   const site = store.setAppSettings(req.params.id, settings);
   if (!site) return res.status(404).json({ error: 'not found' });
   res.json({ app: site });
@@ -1208,11 +1221,72 @@ app.get('/api/people', requireSite, (req, res) => {
   res.set('Cache-Control', 'no-store');
   const ids = Array.from(new Set(String(req.query.ids || '').split(',').map((s) => s.trim()).filter((s) => ID_RE.test(s))));
   if (ids.length > 200) return res.status(400).json({ error: 'at most 200 ids at a time' });
-  res.json({
-    people: store.peopleByIds(ids).map((p) => ({
-      id: p.id, firstName: p.firstName, lastName: p.lastName, shortName: p.shortName, photoUrl: photoUrlFor(req, p)
-    }))
-  });
+  res.json({ people: store.peopleByIds(ids).map((p) => publicPersonView(req, p)) });
+});
+
+// ---------------- Finding someone by phone or Instagram ----------------
+//
+// GET /api/people/lookup?phone=… or ?instagram=… (one of them): the one
+// person whose profile has exactly that, in the public shape, or { person:
+// null }. For a host who already has someone's number or handle and wants
+// to invite them. It's one-way: knowing the number finds the account, and
+// the answer never carries a contact detail, not even the one asked about.
+//
+//   - The input is cleaned exactly as the profile cleans it (cleanPhone,
+//     cleanInstagram), and matched exactly. Never by prefix or anything
+//     fuzzy, so it can't be used to list people.
+//   - Only sites the admin lets look people up, and only for a visitor
+//     signed in there (X-Canopy-Session, as for /api/session) whose email
+//     is proven: limits are per asker, so an asker has to be someone, and
+//     an unverified account is too cheap to make.
+//   - Nobody who turned "Let people ... find you" off, and nobody when two
+//     accounts claim the same one (lib/db.js).
+//   - A miss is { person: null } and says nothing about why.
+//
+// Phone numbers can be listed by brute force (an area code is ten million
+// of them), so it's limited tightly: 30 an hour and 100 a day per asker,
+// 60 an hour per address (the visitor's, which the site passes in
+// X-Canopy-Visitor-Ip, or else the site's own), and 300 an hour across
+// everyone. Every lookup counts, found or not.
+const HOUR = 60 * 60 * 1000;
+const lookupLimits = {
+  askerHour: attemptLimiter(30, HOUR),
+  askerDay: attemptLimiter(100, 24 * HOUR),
+  address: attemptLimiter(60, HOUR),
+  overall: attemptLimiter(300, HOUR),
+  blocked(asker, address) {
+    return this.askerHour.blocked(asker) || this.askerDay.blocked(asker) || this.address.blocked(address) || this.overall.blocked('all');
+  },
+  hit(asker, address) {
+    this.askerHour.hit(asker);
+    this.askerDay.hit(asker);
+    this.address.hit(address);
+    this.overall.hit('all');
+  }
+};
+
+app.get('/api/people/lookup', requireSite, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!req.site.allowsLookup) return res.status(403).json({ error: 'this site may not look people up', reason: 'lookup_not_allowed' });
+  const token = session.readToken(`${session.COOKIE}=${req.get('x-canopy-session') || ''}`);
+  const s = token && store.getSessionByToken(token);
+  const asker = s && s.personId ? store.getPerson(s.personId) : null;
+  if (!asker) return res.status(401).json({ error: 'not signed in', reason: 'signed_out' });
+  if (!asker.emailVerifiedAt) return res.status(403).json({ error: 'confirm your email first', reason: 'email_unverified' });
+
+  const { phone, instagram } = req.query;
+  if ((phone === undefined) === (instagram === undefined) || Array.isArray(phone) || Array.isArray(instagram)) {
+    return res.status(400).json({ error: 'give one of phone or instagram', reason: 'one_of' });
+  }
+  const address = String(req.get('x-canopy-visitor-ip') || clientIp(req)).slice(0, 64);
+  if (lookupLimits.blocked(asker.id, address)) return tooMany(res);
+  lookupLimits.hit(asker.id, address);
+
+  const wanted = phone !== undefined ? { phone: cleanPhone(phone) } : { instagram: cleanInstagram(instagram) };
+  if (wanted.phone === false || wanted.phone === null) return res.status(400).json(BAD_PHONE);
+  if (wanted.instagram === false || wanted.instagram === null) return res.status(400).json(BAD_INSTAGRAM);
+  const found = store.findPerson(wanted);
+  res.json({ person: found ? publicPersonView(req, found) : null });
 });
 
 // ---------------- Pages ----------------
