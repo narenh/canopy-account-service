@@ -428,6 +428,80 @@ orders the same way. Anyone deleting their account to be forgotten
 should be told that: their name and photo are gone everywhere, and what
 they wrote on a site is that site's to remove.
 
+## Admin: test people
+
+Made-up people, to fill real events with guests while designing and
+testing (a friend picker needs a friends list; a guest list needs
+guests). The admin makes them in the Account Manager's **People** tab,
+under **Test people**, and deletes them all together when done. They're
+marked with an orange **Test** badge in the list.
+
+To every site, a test person is an ordinary person: `/api/session` and
+`/api/people` describe them exactly as anyone else, and never say they're
+a test person. Only `GET /api/admin/people` does (`isTest`).
+
+**What a test person is.** A first and last name drawn from a built-in,
+varied list (`lib/testPeople.js`; no two the same at once while there are
+names left), an email `test-<12 hex>@canopy.invalid`, verified (so every
+site treats them as a confirmed guest), not findable, and no passkeys,
+phone, Instagram, Venmo, Cash App or photo. No photo is made here: that
+would need an image library this service doesn't have, and initials work
+everywhere. The seeding script in canopy-events can give them photos
+through the ordinary photo upload, with their tokens.
+
+**The admin API** (an admin session and a Canopy Origin, like every
+`/api/admin` route):
+
+- `POST /api/admin/test-people` `{ "count": 1-50 }` makes that many and
+  returns them (`{ people, count }`, `count` being how many there are now).
+  Call it again for more; at most 200 exist at once (`409
+  too_many_test_people`).
+- `POST /api/admin/test-people/tokens` signs every test person in and
+  returns `{ people: [{ id, firstName, lastName, token }] }`. Each token is
+  a session like an app's (only its SHA-256 is stored; `client_kind`
+  `'test'`), sent as `Authorization: Bearer <token>` to a Canopy site or
+  to `/api/native/v1`. This is the only time they're shown. Asking again
+  signs out every earlier test session and makes new ones. The page shows
+  them once, with **Copy** and **Download** (`canopy-test-tokens.json`, the
+  file the seeding script reads).
+- `DELETE /api/admin/test-people` deletes every test person, the same way
+  as any account (sessions, passkeys, setup links, calendar feed, photo);
+  sites show them as former members. `{ ok, deleted }`.
+
+**What keeps them from being anything more.**
+
+- **Tokens are only ever made for test people.** The query that picks who
+  gets one selects `is_test = 1` rows and nothing else, and so does the
+  insert that makes each session; nothing in the request is read. Real
+  people's sessions are never touched by any of it.
+- **Never found by a lookup**, even if one were given a phone number and
+  had findable switched on (the lookup's queries require `is_test = 0`).
+- **No code is ever sent to a `.invalid` address**: signing in by email,
+  proving the email and changing it to one are refused (`400 bad_email`),
+  and the mailer refuses or skips one as a backstop. So nobody can sign
+  in as a test person by email, and the mail server never sees a bounce.
+- **No setup link or passkey reset** for a test person (`409
+  test_person`); with no passkey and no code, the tokens are the only
+  way in. Changing their email needs a passkey check, which they can't
+  pass.
+
+**Decisions.**
+
+- A column (`people.is_test`, schema version 12), not a separate table: a
+  test person has to be a person for every site, so they live in `people`;
+  the flag is one place every query can filter on.
+- A test person's tokens are deliberately ordinary sessions: what's being
+  tested is how sites treat ordinary people. They last a year from last
+  use, like any session; getting tokens again or deleting the test people
+  ends them.
+- Count 1-50 per call and 200 in all: enough for a busy friends list
+  (30-40 is the aim), small enough that a slip can't fill the database.
+- No generated avatars here (no new native dependency); photos are the
+  seeding script's job, through the same upload a person uses.
+- A quick sign-up with a test person's address is told it's taken, like
+  any address with an account: a quick sign-up sends no email, and with
+  no code there's no takeover.
+
 ## The session cookie
 
 `canopy_session` is a random token, 32 bytes from the OS's random source

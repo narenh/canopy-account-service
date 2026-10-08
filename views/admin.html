@@ -57,6 +57,20 @@
   .calendar-url button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
   .tag.warn{background:#b8572a;color:#ffffff;}
+  /* A test person: made up, to fill events (see "Admin: test people"). */
+  .tag.test{background:#e8811a;color:#ffffff;}
+  /* Test people: their count, and the three things to do with them. */
+  .test-people{margin-bottom:14px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;}
+  .test-people h3{margin:0 0 4px;font-size:15px;}
+  .test-people p{text-align:left;margin:0 0 10px;font-size:13px;color:var(--muted);}
+  .test-people .inline-form{margin-bottom:8px;}
+  .test-people .inline-form input{width:auto;flex:1;min-width:0;}
+  .test-people .buttons{display:flex;gap:8px;flex-wrap:wrap;}
+  .test-people .buttons button{width:auto;}
+  #tokensText{
+    width:100%;box-sizing:border-box;height:220px;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+    background:var(--field);border:1px solid var(--field-line);border-radius:10px;padding:10px;margin-bottom:12px;resize:vertical;
+  }
   .concern{font-size:12px;color:#f3b38f;margin-top:4px;}
   .sub-heading{font-size:14px;margin:18px 0 6px;}
   .actions button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
@@ -101,6 +115,20 @@
 
   <section class="panel" id="people">
     <p data-copy="admin.peopleHint"></p>
+    <!-- Made-up people to fill events with guests (README, "Admin: test
+         people"). -->
+    <div class="test-people">
+      <h3 data-copy="admin.testHeading"></h3>
+      <p id="testCount"></p>
+      <form class="inline-form" id="testCreateForm">
+        <input type="number" id="testCountInput" min="1" max="50" step="1" inputmode="numeric">
+        <button type="submit" id="testCreateBtn" data-copy="admin.testCreate"></button>
+      </form>
+      <div class="buttons">
+        <button type="button" class="secondary" id="testTokensBtn" data-copy="admin.testTokens"></button>
+        <button type="button" class="danger" id="testDeleteBtn" data-copy="admin.testDelete"></button>
+      </div>
+    </div>
     <div id="peopleList"></div>
   </section>
 
@@ -157,6 +185,20 @@
   </div>
 </div>
 
+<!-- Test people's tokens, shown once. -->
+<div class="sheet-bg hidden" id="tokensSheet">
+  <div class="card">
+    <h2 data-copy="admin.testTokensHeading"></h2>
+    <p data-copy="admin.testTokensWarning"></p>
+    <textarea id="tokensText" readonly spellcheck="false"></textarea>
+    <div class="sheet-buttons">
+      <button type="button" id="tokensCopyBtn" data-copy="admin.copy"></button>
+      <button type="button" class="secondary" id="tokensDownloadBtn" data-copy="admin.testDownload"></button>
+      <button type="button" class="secondary" onclick="closeTokens()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit profile: every field the person can set, and their email. -->
 <div class="sheet-bg hidden" id="editSheet">
   <form class="card edit-card" id="editForm">
@@ -208,6 +250,7 @@
 <script>
 applyCopy();
 document.getElementById('siteName').placeholder = t('admin.siteName');
+document.getElementById('testCountInput').placeholder = t('admin.testCountPlaceholder');
 
 // ---------------- Tabs (in the URL hash, so reload keeps the tab) ----------------
 const TABS = ['people', 'sites', 'lookups', 'settings'];
@@ -274,6 +317,11 @@ async function loadPeople(){
   // The admin first, then everyone by first and last name.
   const byName = (a, b) => (a.firstName + ' ' + a.lastName).localeCompare(b.firstName + ' ' + b.lastName, undefined, { sensitivity: 'base' });
   data.people.sort((a, b) => (b.id === data.adminPersonId) - (a.id === data.adminPersonId) || byName(a, b));
+  testPeopleCount = data.people.filter((p) => p.isTest).length;
+  document.getElementById('testCount').textContent = testPeopleCount === 0 ? t('admin.testNone')
+    : testPeopleCount === 1 ? t('admin.testOne') : t('admin.testMany', { count: testPeopleCount });
+  document.getElementById('testTokensBtn').disabled = testPeopleCount === 0;
+  document.getElementById('testDeleteBtn').disabled = testPeopleCount === 0;
   data.people.forEach((p) => {
     const isAdmin = p.id === data.adminPersonId;
     const full = p.firstName + ' ' + p.lastName;
@@ -294,6 +342,12 @@ async function loadPeople(){
       tag.textContent = t('admin.adminTag');
       name.appendChild(tag);
     }
+    if (p.isTest){
+      const tag = document.createElement('span');
+      tag.className = 'tag test';
+      tag.textContent = t('admin.testTag');
+      name.appendChild(tag);
+    }
     // A quick sign-up, or an email changed here, that no code has proven.
     if (!p.emailVerified){
       const tag = document.createElement('span');
@@ -309,9 +363,12 @@ async function loadPeople(){
     const actions = document.createElement('div');
     actions.className = 'actions';
     actions.appendChild(button(t('admin.editProfile'), 'secondary', () => openEdit(p)));
-    actions.appendChild(button(t('admin.setupLink'), 'secondary', (b) => setupLink(p, b, false)));
+    // A test person has no passkeys and never gets one.
+    if (!p.isTest) actions.appendChild(button(t('admin.setupLink'), 'secondary', (b) => setupLink(p, b, false)));
     // Your own reset or delete would lock you out (see server.js).
-    if (!isAdmin){
+    if (p.isTest){
+      actions.appendChild(button('Delete', 'danger', (b) => remove(p, b)));
+    } else if (!isAdmin){
       actions.appendChild(button(t('admin.resetPasskeys'), 'secondary', (b) => setupLink(p, b, true)));
       actions.appendChild(button('Delete', 'danger', (b) => remove(p, b)));
     }
@@ -393,6 +450,66 @@ async function remove(p, btn){
   try{ await api('DELETE', '/api/admin/people/' + p.id); }catch(e){ fail(e); }
   loadPeople();
 }
+
+// ---------------- Test people ----------------
+let testPeopleCount = 0;
+document.getElementById('testCreateForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('testCountInput');
+  const btn = document.getElementById('testCreateBtn');
+  const count = Number(input.value);
+  if (!Number.isInteger(count) || count < 1 || count > 50){ fail(new Error(t('admin.testCountPlaceholder'))); return; }
+  btn.disabled = true;
+  try{
+    await api('POST', '/api/admin/test-people', { count });
+    input.value = '';
+  }catch(err){ fail(err); }
+  btn.disabled = false;
+  loadPeople();
+});
+
+// Every test person's token, once: copy it or download it as
+// canopy-test-tokens.json for scripts/seed-guests.js (canopy-events).
+document.getElementById('testTokensBtn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try{
+    const data = await api('POST', '/api/admin/test-people/tokens');
+    document.getElementById('tokensText').value = JSON.stringify(data, null, 2);
+    document.getElementById('tokensCopyBtn').textContent = t('admin.copy');
+    document.getElementById('tokensSheet').classList.remove('hidden');
+  }catch(err){ fail(err); }
+  btn.disabled = false;
+});
+function closeTokens(){
+  document.getElementById('tokensSheet').classList.add('hidden');
+  document.getElementById('tokensText').value = '';
+}
+document.getElementById('tokensSheet').addEventListener('click', (e) => { if (e.target.id === 'tokensSheet') closeTokens(); });
+document.getElementById('tokensCopyBtn').addEventListener('click', async () => {
+  try{
+    await navigator.clipboard.writeText(document.getElementById('tokensText').value);
+    document.getElementById('tokensCopyBtn').textContent = t('admin.copied');
+  }catch(e){}
+});
+document.getElementById('tokensDownloadBtn').addEventListener('click', () => {
+  const blob = new Blob([document.getElementById('tokensText').value + '\n'], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'canopy-test-tokens.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+document.getElementById('testDeleteBtn').addEventListener('click', async (e) => {
+  if (!confirm(t('admin.testDeleteConfirm', { count: testPeopleCount }))) return;
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try{ await api('DELETE', '/api/admin/test-people'); }catch(err){ fail(err); }
+  loadPeople();
+});
 
 // ---------------- Sites ----------------
 async function loadSites(){

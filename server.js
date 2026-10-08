@@ -27,6 +27,7 @@ const { attemptLimiter, guessLimits, clientIp } = require('./lib/limits');
 const { BASE, isCanopyOrigin, safeReturn, passkeyRpId, isAppOrigin } = require('./lib/domain');
 const { createCalendar } = require('./lib/calendar');
 const { buildCalendar } = require('./lib/ics');
+const { testNames } = require('./lib/testPeople');
 
 const logoImageStore = createImageStore('logo');
 const backdropImageStore = createImageStore('backdrop');
@@ -301,6 +302,17 @@ function cleanEmail(raw) {
   const email = String(raw || '').trim().toLowerCase().slice(0, 200);
   return EMAIL_RE.test(email) ? email : null;
 }
+
+// An address no mail can reach: the reserved .invalid top-level domain,
+// which test people's emails use (test-...@canopy.invalid). No code is ever
+// sent to one, so a test person can't be signed into by email, and nothing
+// is handed to the mail server that it would only bounce. (A quick sign-up
+// sends no email, so it isn't refused there: a test person's address is
+// "taken" like anyone's, and with no code there's no takeover.)
+function undeliverable(email) {
+  return /\.invalid$/i.test(String(email || ''));
+}
+const UNDELIVERABLE = { error: "that email can't receive mail", reason: 'bad_email' };
 
 function cleanNames(body) {
   const firstName = String(body.firstName || '').trim().replace(/\s+/g, ' ').slice(0, 60);
@@ -602,6 +614,7 @@ const emailStart = handle(async (req, res) => {
   if (!accountsOpen(req, res)) return;
   const email = cleanEmail((req.body || {}).email);
   if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
+  if (undeliverable(email)) return res.status(400).json(UNDELIVERABLE);
 
   if (hasAdminSetupGrant(req)) {
     const adminId = store.getAdminPersonId();
@@ -1081,6 +1094,7 @@ const emailChangeStart = handle(async (req, res) => {
   if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
   const email = cleanEmail((req.body || {}).email);
   if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
+  if (undeliverable(email)) return res.status(400).json(UNDELIVERABLE);
   if (email === req.person.email) return res.status(400).json({ error: "that's already your email", reason: 'same_email' });
   if (emailChangeLimiter.blocked(req.person.id) || codeSendLimits.blocked(req, email)) return tooMany(res);
   emailChangeLimiter.hit(req.person.id);
@@ -1169,6 +1183,7 @@ const verifyStart = handle(async (req, res) => {
   // Only if its key was lost (see "Contact details at rest"): signing in
   // with a code to the address brings it back.
   if (!email) return res.status(409).json({ error: 'sign in with a code to your email to confirm it', reason: 'email_unreadable' });
+  if (undeliverable(email)) return res.status(400).json(UNDELIVERABLE);
   if (codeSendLimits.blocked(req, email)) return tooMany(res);
   codeSendLimits.hit(req, email);
   const code = store.issueEmailCode(req.sess.idHash, email);
@@ -1524,7 +1539,9 @@ function adminPersonView(req, p) {
     ...personView(req, p),
     passkeyCount: p.passkeyCount !== undefined ? p.passkeyCount : store.passkeysOf(p.id).length,
     emailVerifiedAt: p.emailVerifiedAt,
-    createdAt: p.createdAt
+    createdAt: p.createdAt,
+    // Only ever here, for the admin: sites see test people as anyone else.
+    isTest: p.isTest
   };
 }
 
@@ -1570,8 +1587,16 @@ function notTheAdmin(req, res) {
 
 // Lost phone: their passkeys go, they're signed out everywhere, and the
 // answer is a setup link to send them.
+// A test person never gets a way in but the admin's tokens (below).
+function notATestPerson(req, res) {
+  const p = store.getPerson(req.params.id);
+  if (!p || !p.isTest) return true;
+  res.status(409).json({ error: 'not for a test person', reason: 'test_person' });
+  return false;
+}
+
 app.post('/api/admin/people/:id/reset-passkeys', (req, res) => {
-  if (!notTheAdmin(req, res)) return;
+  if (!notTheAdmin(req, res) || !notATestPerson(req, res)) return;
   const result = store.resetPasskeys(req.params.id);
   if (!result.ok) return res.status(404).json({ error: 'not found' });
   res.json(setupLinkView(req, result.code));
@@ -1581,6 +1606,7 @@ app.post('/api/admin/people/:id/reset-passkeys', (req, res) => {
 // yet, or a link that ran out before they used it.
 app.post('/api/admin/people/:id/setup-link', (req, res) => {
   if (!store.getPerson(req.params.id)) return res.status(404).json({ error: 'not found' });
+  if (!notATestPerson(req, res)) return;
   res.json(setupLinkView(req, store.createSetupLink(req.params.id)));
 });
 
@@ -1592,6 +1618,48 @@ app.delete('/api/admin/people/:id', (req, res) => {
   try { photoStore.remove(req.params.id); } catch (e) {}
   calendar.forget(req.params.id);
   res.json({ ok: true });
+});
+
+// ---- Test people ----
+//
+// Made-up people to fill events with guests while designing and testing
+// (see "Admin: test people" in the README). To every site they're
+// ordinary people; only the admin's list says which they are.
+//
+//   POST   /api/admin/test-people         { count: 1-50 } makes that many
+//   POST   /api/admin/test-people/tokens  a signed-in token for each, once
+//   DELETE /api/admin/test-people         deletes every one of them
+//
+// At most TEST_PEOPLE_MAX at once, so a slip can't fill the database.
+const TEST_PEOPLE_MAX = 200;
+
+app.post('/api/admin/test-people', (req, res) => {
+  const count = (req.body || {}).count;
+  if (!Number.isInteger(count) || count < 1 || count > 50) {
+    return res.status(400).json({ error: 'count is a whole number from 1 to 50', reason: 'bad_count' });
+  }
+  const existing = store.listTestPeople();
+  if (existing.length + count > TEST_PEOPLE_MAX) {
+    return res.status(409).json({ error: `at most ${TEST_PEOPLE_MAX} test people at once`, reason: 'too_many_test_people' });
+  }
+  const made = store.createTestPeople(testNames(count, existing.map((p) => `${p.firstName} ${p.lastName}`)));
+  res.status(201).json({ people: made.map((p) => adminPersonView(req, p)), count: existing.length + made.length });
+});
+
+// Every test person's token, signed in like an app's. Their earlier test
+// tokens stop working. Shown once: nothing here can show them again.
+app.post('/api/admin/test-people/tokens', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ people: store.mintTestSessions() });
+});
+
+app.delete('/api/admin/test-people', (req, res) => {
+  const ids = store.deleteTestPeople();
+  ids.forEach((id) => {
+    try { photoStore.remove(id); } catch (e) {}
+    calendar.forget(id);
+  });
+  res.json({ ok: true, deleted: ids.length });
 });
 
 // Sites: each Canopy site that asks who's signed in has its own key,

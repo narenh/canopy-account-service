@@ -33,6 +33,7 @@ test('a version 1 database is brought up to date', () => {
     old.exec('DROP TABLE lookup_log');
     ['calendar_url', 'calendar_secret', 'calendar_secret_at'].forEach((c) => old.exec(`ALTER TABLE apps DROP COLUMN ${c}`));
     old.exec('DROP TABLE calendar_feeds');
+    old.exec('ALTER TABLE people DROP COLUMN is_test');
     // p1's email was proven; p2's was changed by the admin (null), which
     // before version 5 changed nothing.
     old.prepare("INSERT INTO people (id, email, first_name, last_name, email_verified_at, created_at, updated_at) VALUES ('p1', 'a@b.co', 'A', 'B', 5, 1, 1)").run();
@@ -87,13 +88,16 @@ test('a version 1 database is brought up to date', () => {
     const feed = store.calendarFeed('p1');
     assert.equal(store.personByCalendarSecret(feed.secret).id, 'p1');
     assert.equal(store.calendarFeed('nobody'), null);
+    // Version 12: test people. Everyone already here is a real person.
+    assert.equal(store.getPerson('p1').isTest, false);
+    assert.equal(store.getPerson('p2').isTest, false);
     store.db.close();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('a version 10 database (contact details sealed) opens at 11, and calendar secrets follow a key rotation', () => {
+test('a version 10 database (contact details sealed) opens at the current version, and calendar secrets follow a key rotation', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-schema-test-'));
   const file = path.join(dir, 'account.db');
   try {
@@ -105,6 +109,7 @@ test('a version 10 database (contact details sealed) opens at 11, and calendar s
     const old = new Database(file);
     ['calendar_url', 'calendar_secret', 'calendar_secret_at'].forEach((c) => old.exec(`ALTER TABLE apps DROP COLUMN ${c}`));
     old.exec('DROP TABLE calendar_feeds');
+    old.exec('ALTER TABLE people DROP COLUMN is_test');
     old.prepare("INSERT INTO apps (id, name, key_hash, created_at) VALUES ('a1', 'events', 'h', 1)").run();
     old.pragma('user_version = 10');
     old.close();
@@ -113,7 +118,7 @@ test('a version 10 database (contact details sealed) opens at 11, and calendar s
     // aren't there yet: that has to work.
     const store = init({ file, snapshots: false, contactCrypto, production: true });
     assert.equal(store.db.pragma('user_version', { simple: true }), SCHEMA_VERSION);
-    assert.equal(SCHEMA_VERSION, 11);
+    assert.equal(SCHEMA_VERSION, 12);
     const site = store.setAppCalendarUrl('a1', 'http://events:3000');
     const feed = store.calendarFeed('p1');
     store.db.close();
@@ -136,6 +141,43 @@ test('a version 10 database (contact details sealed) opens at 11, and calendar s
     assert.notEqual(afterLoss.calendarFeed('p1').secret, feed.secret);
     assert.equal(afterLoss.personByCalendarSecret(feed.secret), null);
     afterLoss.db.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a version 11 database gets test people at 12: nobody already there is one', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-schema-test-'));
+  const file = path.join(dir, 'account.db');
+  try {
+    const first = init({ file, snapshots: false, contactCrypto });
+    first.db.prepare("INSERT INTO people (id, email, email_hash, first_name, last_name, email_verified_at, created_at, updated_at) VALUES ('p1', ?, ?, 'A', 'B', 1, 1, 1)")
+      .run(contactCrypto.seal('email', 'a@b.co'), contactCrypto.hash('email', 'a@b.co'));
+    first.db.close();
+    const old = new Database(file);
+    old.exec('ALTER TABLE people DROP COLUMN is_test');
+    old.pragma('user_version = 11');
+    old.close();
+
+    const store = init({ file, snapshots: false, contactCrypto, production: true });
+    assert.equal(store.db.pragma('user_version', { simple: true }), 12);
+    assert.equal(store.getPerson('p1').isTest, false);
+    assert.deepEqual(store.listTestPeople(), []);
+    assert.deepEqual(store.mintTestSessions(), [], 'no tokens for a real person');
+    // Test people from here on: verified, not findable, no passkeys, an
+    // undeliverable email, and the only ones tokens are made for.
+    const [made] = store.createTestPeople([{ firstName: 'Tess', lastName: 'Tester' }]);
+    assert.equal(made.isTest, true);
+    assert.equal(made.findable, false);
+    assert.ok(made.emailVerifiedAt);
+    assert.match(made.email, /^test-[0-9a-f]{12}@canopy\.invalid$/);
+    assert.deepEqual(store.passkeysOf(made.id), []);
+    const tokens = store.mintTestSessions();
+    assert.deepEqual(tokens.map((x) => x.id), [made.id]);
+    assert.equal(store.getSessionByToken(tokens[0].token).personId, made.id);
+    assert.deepEqual(store.deleteTestPeople(), [made.id]);
+    assert.equal(store.getPerson('p1').id, 'p1', 'the real person stays');
+    store.db.close();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
