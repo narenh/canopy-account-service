@@ -141,7 +141,7 @@ const COPY = {
     signOutEverywhereConfirm: 'Sign out of every browser and app you’re signed in on, this one included?',
     // Your calendar feed: one link for a calendar app to subscribe to.
     calendarHeading: 'Calendar',
-    calendarHint: 'Everything you’re hosting or going to on Canopy, in your phone’s calendar, kept up to date. Anyone with the link can see those events, so keep it to yourself.',
+    calendarHint: "One calendar feed for all your Canopy events. Updates automatically. Don't share this link, since anyone can use it to see your events.",
     calendarAdd: 'Add to Calendar',
     calendarCopy: 'Copy link',
     calendarCopied: 'Copied. Paste it into your calendar app’s “subscribe” or “add from URL”.',
