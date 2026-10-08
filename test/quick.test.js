@@ -9,6 +9,12 @@ const { startServer, browser } = require('./harness');
 
 const EVENT = 'https://events.canopysf.com/e/abc123';
 
+// The smallest JPEG the photo upload takes: a start, one table, the scan,
+// and an end.
+function tinyJpeg() {
+  return Buffer.from('ffd8ffdb0004aaaaffda0004bbbb0102ffd9', 'hex');
+}
+
 test('quick sign-up and verification', async (t) => {
   const server = await startServer();
   t.after(() => server.stop());
@@ -121,24 +127,72 @@ test('quick sign-up and verification', async (t) => {
   });
 
   await t.test('signing in by code to an unverified account proves it, and takes it from whoever made it', async () => {
-    // Someone quick-signs-up with an email that isn't theirs...
+    // Someone quick-signs-up with an email that isn't theirs, and fills in
+    // their own details...
     const mallory = browser(server);
     const squat = await mallory.quickSignUp('bob@example.com', 'Bob', 'Bobson');
     assert.equal(squat.status, 201, squat.text);
     const bobId = squat.data.person.id;
+    const filled = await mallory.patch('/api/profile', {
+      firstName: 'Bob', lastName: 'Bobson', phone: '(415) 555-0199', instagram: 'mallory.m', venmoHandle: 'mallory-pays', cashapp: 'MalloryM', findable: false
+    });
+    assert.equal(filled.status, 200, filled.text);
+    const form = new FormData();
+    form.append('photo', new Blob([tinyJpeg()], { type: 'image/jpeg' }), 'photo.jpg');
+    const photo = await mallory.upload('/api/profile/photo', form);
+    assert.equal(photo.status, 200, photo.text);
+    const photoFile = path.join(server.dataDir, 'photos', `${bobId}.jpg`);
+    assert.ok(require('fs').existsSync(photoFile));
     // ...and the inbox's owner signs in with a code.
     const bob = browser(server);
     const proven = await bob.proveEmail('bob@example.com');
     assert.equal(proven.data.state, 'existing');
     assert.equal(proven.data.unverified, true);
+    // The warning page names the account by what its maker typed.
+    assert.equal(proven.data.firstName, 'Bob');
     const made = await bob.makePasskey(await bob.post('/api/auth/register/existing'));
     assert.equal(made.status, 201, made.text);
+    assert.equal(made.data.tookOver, true, 'the answer says so, and the page goes on to the profile');
     assert.equal(made.data.person.id, bobId);
     assert.equal(made.data.person.emailVerified, true);
+    // What the maker typed is gone; the name stays, for Bob to check.
+    const p = made.data.person;
+    assert.deepEqual([p.phone, p.instagram, p.venmo, p.cashapp, p.photoUrl], [null, null, null, null, null]);
+    assert.equal(p.findable, true, 'back to the default');
+    assert.deepEqual([p.firstName, p.lastName], ['Bob', 'Bobson']);
+    assert.ok(!require('fs').existsSync(photoFile), "the maker's photo file is deleted");
     assert.equal((await bob.get('/api/profile/passkeys')).data.passkeys.length, 1, 'only his passkey is left');
     assert.equal((await mallory.get('/api/me')).data.person, null, "the maker's session is gone");
     assert.equal((await mallory.signInWithPasskey()).data.reason, 'unknown_passkey');
     assert.equal((await sessionFor(tickets, bob.cookie)).data.person.id, bobId);
+  });
+
+  await t.test('a sign-in by code to a verified account takes nothing away', async () => {
+    const dee = browser(server);
+    await dee.signUp('dee@example.com', 'Dee', 'Dunn');
+    await dee.patch('/api/profile', { firstName: 'Dee', lastName: 'Dunn', phone: '(415) 555-0123' });
+    const phone = browser(server);
+    await phone.proveEmail('dee@example.com');
+    const made = await phone.makePasskey(await phone.post('/api/auth/register/existing'));
+    assert.equal(made.status, 201, made.text);
+    assert.equal(made.data.tookOver, undefined);
+    assert.equal(made.data.person.phone, '+14155550123');
+    assert.equal((await dee.get('/api/me')).data.person.id, made.data.person.id, 'still signed in');
+  });
+
+  await t.test('the profile after a takeover asks them to check the name', async () => {
+    const bob = browser(server);
+    await bob.proveEmail('bob@example.com');
+    await bob.makePasskey(await bob.post('/api/auth/register/existing'));
+    const page = await bob.get('/profile?claimed=1&return=' + encodeURIComponent(EVENT));
+    assert.equal(page.status, 200);
+    assert.match(page.text, /id="claimedBanner"/);
+    assert.match(page.text, /data-copy="profile\.claimedBanner"/);
+    assert.match(page.text, /data-return="https:\/\/events\.canopysf\.com\/e\/abc123"/);
+    assert.match(page.text, /Check that the name is yours/);
+    const welcome = await browser(server).get('/');
+    assert.match(welcome.text, /photo are cleared\. The name stays, and you can change it on the next page/);
+    assert.match(welcome.text, /enterClaimed\(\)/);
   });
 
   await t.test('changing the email of an unverified account proves the new one', async () => {

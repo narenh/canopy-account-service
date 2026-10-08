@@ -325,11 +325,13 @@ email if it wasn't already.
 **When `unverified` is true, say so first.** That account's email was
 never proven (a quick sign-up), so whoever made it may not own the
 inbox. Finishing here takes it over: **every passkey it had is removed,
-and every other browser and app is signed out**, leaving this passkey as
-the only one. That's right for the inbox's owner, and it's what stops
-someone squatting on their email. But it also signs out a real quick
-sign-up's other phone, so tell them before they go on, the way the web
-does.
+every other browser and app is signed out**, leaving this passkey as
+the only one, and **its phone, Instagram, Venmo, Cash App and photo are
+cleared** (and "findable" goes back to on). That's right for the inbox's
+owner, and it's what stops someone squatting on their email. But it also
+signs out a real quick sign-up's other phone and empties their profile,
+so tell them before they go on, the way the web does. The `firstName`
+here is whatever the account's maker typed, and it stays.
 
 **4. The passkey, either way.**
 
@@ -343,6 +345,10 @@ Authorization: Bearer <ceremony>
 ```json
 201 {"token": "q3Xb...", "person": { ... }}
 ```
+
+After a takeover (above) the answer also has `"tookOver": true`. The name
+is still the one its maker typed, so go to the profile next, where they
+can change it, as the web does.
 
 `409 passkey_exists` (that passkey is already saved), `400 expired`
 (more than 5 minutes, or already tried: ask for options again).

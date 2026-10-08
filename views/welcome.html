@@ -162,6 +162,13 @@ function enter(){
   window.location.href = adminFlow ? '/admin' : (RETURN_URL || '/');
 }
 
+// Just took an unverified account over (the server's `tookOver`): what its
+// maker typed in is cleared, but the name is still theirs. So the profile
+// first, to check it, and on from there to wherever they were going.
+function enterClaimed(){
+  window.location.href = '/profile?claimed=1' + (RETURN_URL ? '&return=' + encodeURIComponent(RETURN_URL) : '');
+}
+
 const CARDS = ['adminSetupForm', 'emailForm', 'codeForm', 'profileForm', 'existingCard', 'quickForm', 'quickTakenCard'];
 function showCard(id){
   CARDS.forEach(c => document.getElementById(c).classList.toggle('hidden', c !== id));
@@ -297,7 +304,8 @@ document.getElementById('newPasskeyBtn').addEventListener('click', (e) => {
       errorEl.textContent = data.reason === 'verify_first' ? t('welcome.expired') : t('welcome.failed') + detail(data.error || res.status);
       return;
     }
-    if (await finishRegistration(data.options, errorEl)) enter();
+    const done = await finishRegistration(data.options, errorEl);
+    if (done) done.tookOver ? enterClaimed() : enter();
   });
 });
 

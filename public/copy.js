@@ -47,8 +47,9 @@ const COPY = {
     existingHintHasPasskey: 'Sign in with your passkey, or save a new one on this phone (a new phone, or a lost one).',
     newPasskey: 'Save a passkey on this phone',
     // A quick sign-up's account, before anyone proved its email. A passkey
-    // saved here takes it over (see "Quick sign-up" in the README).
-    existingHintUnverified: "This account's email hadn't been confirmed. Saving a passkey on this phone confirms it, and removes the passkeys the account was set up with, so only you can get in.",
+    // saved here takes it over (see "Proving the email" in the README). The
+    // name in the heading above it is whoever made the account's.
+    existingHintUnverified: "This account's email hadn't been confirmed, so whoever set it up may not have been you. Saving a passkey on this phone confirms it and makes it yours alone: the passkeys it was set up with are removed, and its phone, Instagram, Venmo, Cash App and photo are cleared. The name stays, and you can change it on the next page.",
     // Quick sign-up (?quick=1): name, email, passkey; no code, no photo.
     quickHeading: 'Create Account',
     quickHaveAccount: 'Already have a Canopy account?',
@@ -147,7 +148,11 @@ const COPY = {
     verifyHeading: 'Confirm your email',
     verifyHint: "We'll send a 6-digit code to {email}.",
     verifySend: 'Send code',
-    verified: 'Email confirmed.'
+    verified: 'Email confirmed.',
+    // Just after signing in by code took an unverified account over
+    // (/profile?claimed=1): its name is still whatever its maker typed.
+    claimedBanner: "This account is yours now. Its phone, Instagram, Venmo, Cash App and photo were cleared. Check that the name is yours, and save.",
+    claimedContinue: 'Continue'
   },
 
   // ---------------- The admin, at /admin ----------------

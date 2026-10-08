@@ -102,7 +102,9 @@ test("the answers have the spec's fields", async (t) => {
   const made = await app.signUp('ana@example.com', 'Ana', 'Lima');
   const schemas = spec.components.schemas;
   const keys = (o) => Object.keys(o).sort();
-  assert.deepEqual(keys(made.data), keys(spec.components.responses.SignedInNow.content['application/json'].schema.properties));
+  const signedIn = spec.components.responses.SignedInNow.content['application/json'].schema;
+  assert.deepEqual(keys(made.data), [...signedIn.required].sort());
+  for (const k of Object.keys(made.data)) assert.ok(signedIn.properties[k], `SignedInNow has ${k}`);
   assert.deepEqual(keys(made.data.person), [...schemas.Person.required].sort());
   assert.deepEqual(keys((await app.get('/me/passkeys')).data.passkeys[0]), [...schemas.Passkey.required].sort());
   assert.deepEqual(keys((await app.get('/me/sessions')).data.sessions[0]), [...schemas.Session.required].sort());

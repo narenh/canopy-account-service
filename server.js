@@ -788,6 +788,7 @@ const registerVerify = handle(async (req, res) => {
 
   const { mode } = pending.profile;
   let personId = pending.personId;
+  let tookOver = false;
   if (mode === 'new') {
     // Checked again: the setup password may have run out since.
     if (!accountsOpen(req, res)) return;
@@ -807,8 +808,16 @@ const registerVerify = handle(async (req, res) => {
     // The proven email still has to be this person's.
     if (!person || store.verifiedEmail(req.sess.idHash) !== person.email) return res.status(400).json(EXPIRED);
     // The code proved the email, so the account is verified now -- and if
-    // it wasn't before, it's this inbox's owner's alone (lib/db.js).
-    if (!store.addPasskeyProvingEmail(personId, cred, req.sess.idHash).ok) return res.status(400).json(EXPIRED);
+    // it wasn't before, it's this inbox's owner's alone, with what its maker
+    // typed in cleared (lib/db.js). The answer says so (`tookOver`), and the
+    // page goes on to the profile so the owner can check the name, which is
+    // still the maker's.
+    const proved = store.addPasskeyProvingEmail(personId, cred, req.sess.idHash);
+    if (!proved.ok) return res.status(400).json(EXPIRED);
+    if (proved.tookOver) {
+      try { photoStore.remove(personId); } catch (e) {}
+      tookOver = true;
+    }
   } else if (mode === 'link') {
     if (!store.useSetupLink(pending.profile.codeHash, personId)) {
       return res.status(404).json({ error: 'that link has been used or has run out', reason: 'bad_link' });
@@ -822,7 +831,7 @@ const registerVerify = handle(async (req, res) => {
     return res.status(400).json(EXPIRED);
   }
   finishSignIn(req, res, personId);
-  res.status(201).json(signedInView(req));
+  res.status(201).json(tookOver ? { ...signedInView(req), tookOver } : signedInView(req));
 });
 app.post('/api/auth/register/verify', attachSession(false), registerVerify);
 

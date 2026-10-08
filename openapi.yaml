@@ -888,6 +888,15 @@ components:
             properties:
               token: { $ref: '#/components/schemas/Token' }
               person: { $ref: '#/components/schemas/Person' }
+              tookOver:
+                type: boolean
+                const: true
+                description: |
+                  Only from `auth/register/verify` after `auth/register/existing`
+                  on an unverified account: this took it over. Its other passkeys
+                  and sign-ins are gone, and so are its phone, Instagram, Venmo,
+                  Cash App and photo. The name is still whatever its maker typed:
+                  show the profile so they can check it.
     CreationOptions:
       description: Make a passkey with these, then send it to the next step within 5 minutes.
       content:

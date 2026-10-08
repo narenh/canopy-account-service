@@ -294,6 +294,7 @@ test('apps, end to end', async (t) => {
     assert.equal(proven.data.unverified, true);
     const made = await bob.makePasskey(await bob.post('/auth/register/existing'));
     assert.equal(made.status, 201, made.text);
+    assert.equal(made.data.tookOver, true);
     assert.equal(made.data.person.id, bobId);
     assert.equal(made.data.person.emailVerified, true);
     assert.equal((await bob.get('/me/passkeys')).data.passkeys.length, 1, 'only his passkey is left');

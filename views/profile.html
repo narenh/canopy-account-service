@@ -49,13 +49,20 @@
   }
 </style>
 </head>
-<!-- data-return: where ?verify=1 goes once the email is confirmed. The
-     server already checked it's a Canopy page; empty means stay here. -->
+<!-- data-return: where ?verify=1 goes once the email is confirmed, and
+     where ?claimed=1's Continue goes. The server already checked it's a
+     Canopy page; empty means stay here. -->
 <body class="mesh-bg" data-return="__RETURN_URL__">
   <header class="page-head">
     <a href="/admin" id="adminLink" class="nav-btn hidden" data-copy="profile.admin"></a>
   </header>
   <div class="stack">
+    <!-- After signing in by code took an unverified account over
+         (?claimed=1): check the name, which its maker typed. -->
+    <div class="card verify-banner hidden" id="claimedBanner">
+      <p data-copy="profile.claimedBanner"></p>
+      <button type="button" id="claimedContinueBtn" class="hidden" data-copy="profile.claimedContinue"></button>
+    </div>
     <div class="card verify-banner hidden" id="verifyBanner">
       <p data-copy="profile.verifyBanner"></p>
       <button type="button" id="verifyOpenBtn" data-copy="profile.verifyButton"></button>
@@ -593,7 +600,16 @@ document.getElementById('signOutBtn').addEventListener('click', (e) => {
     if (!person.emailVerified) openVerifySheet();
     else if (RETURN_URL) window.location.href = RETURN_URL;
   }
+  if (new URLSearchParams(window.location.search).has('claimed')){
+    document.getElementById('claimedBanner').classList.remove('hidden');
+    document.getElementById('claimedContinueBtn').classList.toggle('hidden', !RETURN_URL);
+    document.getElementById('firstName').focus();
+  }
 })();
+
+document.getElementById('claimedContinueBtn').addEventListener('click', () => {
+  if (RETURN_URL) window.location.href = RETURN_URL;
+});
 </script>
 </body>
 </html>

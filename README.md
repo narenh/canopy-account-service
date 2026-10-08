@@ -269,10 +269,27 @@ next to the squatter's, the squatter would be in a verified account,
 reading whatever the owner puts in it. So when a code proves the email
 of an account that wasn't verified, every passkey it had is removed and
 every other browser is signed out, and the inbox's owner is left with
-the only passkey. The page says so before they make it. The cost falls
+the only passkey.
+
+What the squatter typed in goes too: the phone and Instagram (which the
+lookup finds people by, so a squatter's number would otherwise end up on
+the owner's account), the Venmo and Cash App (where the owner's friends
+would send money), the photo (its file is deleted), and **Let people
+find you**, back to the default. The first and last name stay: an
+account can't be without one, and the most common way to get here is a
+real quick sign-up signing in by code on a second phone, whose name it
+is. But the owner shouldn't have to trust it: the
+page shows it in the warning ("Welcome back, Bob"), and once the passkey
+is made it goes on to the profile, not back to the site, with a banner
+saying what was cleared and asking them to check the name and save
+(`/profile?claimed=1`, with **Continue** to `?return=`). The answer says
+`"tookOver": true`, so the apps can do the same.
+
+The page says all this before they make the passkey. The cost falls
 on a real quick sign-up who signs in by code on a second device instead
 of using their passkey: their first phone is signed out and needs a code
-too. Confirming from the profile doesn't do this, because that's someone
+too, and the details they'd filled in have to be filled in again.
+Confirming from the profile doesn't do this, because that's someone
 already signed in to the account.
 
 **An email the admin changes is unverified** until its owner types a code
