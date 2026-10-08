@@ -204,23 +204,28 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
   // site the account admin lets look people up. Anything else rejects
   // with an Error carrying `status` and `reason`: 401 signed_out, 403
   // email_unverified or lookup_not_allowed, 400 bad_phone, bad_instagram
-  // or one_of, 429 rate_limited. Not cached.
+  // or one_of, 429 rate_limited. Not cached. It's a POST with the number
+  // or handle in the body, never in the URL: don't log `query` either.
   async function lookup(req, query) {
     const { token } = readToken(req);
     if (!token) throw lookupError(401, 'signed_out', 'not signed in');
     const q = query || {};
-    const params = new URLSearchParams();
-    if (q.phone != null && q.instagram == null) params.set('phone', String(q.phone));
-    else if (q.instagram != null && q.phone == null) params.set('instagram', String(q.instagram));
+    let body;
+    if (q.phone != null && q.instagram == null) body = { phone: String(q.phone) };
+    else if (q.instagram != null && q.phone == null) body = { instagram: String(q.instagram) };
     else throw lookupError(400, 'one_of', 'give one of phone or instagram');
     // The visitor's address, for the per-address limit.
     const ip = (typeof req.get === 'function' && req.get('cf-connecting-ip')) || req.ip || '';
-    const r = await fetch(`${base}/api/people/lookup?${params}`, {
-      headers: { ...headers, 'X-Canopy-Session': token, 'X-Canopy-Visitor-Ip': ip }
+    // A POST, so the number or handle is in the body and never in a URL
+    // (which ends up in logs along the way).
+    const r = await fetch(`${base}/api/people/lookup`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json', 'X-Canopy-Session': token, 'X-Canopy-Visitor-Ip': ip },
+      body: JSON.stringify(body)
     });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw lookupError(r.status, body.reason, body.error || `account service answered ${r.status}`);
-    return body.person || null;
+    const answer = await r.json().catch(() => ({}));
+    if (!r.ok) throw lookupError(r.status, answer.reason, answer.error || `account service answered ${r.status}`);
+    return answer.person || null;
   }
 
   return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl };

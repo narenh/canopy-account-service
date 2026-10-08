@@ -66,6 +66,8 @@ function browser(server, { origin } = {}) {
     const h = { ...headers };
     if (cookie) h.Cookie = `canopy_session=${cookie}`;
     if (method !== 'GET' && h.Origin === undefined) h.Origin = pageOrigin;
+    // null leaves a header out altogether (a site's server sends no Origin).
+    Object.keys(h).forEach((k) => { if (h[k] === null) delete h[k]; });
     let payload;
     if (form) payload = form;
     else if (body !== undefined) { h['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }

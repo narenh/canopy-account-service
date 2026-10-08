@@ -49,7 +49,7 @@ is this**, **what's their name and photo**, and **are they signed in**.
 - Every Canopy site asks it, server to server, who the visitor is
   (`GET /api/session`), what other people are called
   (`GET /api/people`), and, if it's allowed to, who has a phone number or
-  Instagram someone typed (`GET /api/people/lookup`). `client/canopy-account.js` is the one file a site
+  Instagram someone typed (`POST /api/people/lookup`). `client/canopy-account.js` is the one file a site
   copies in to do that.
 
 Signing in on one Canopy site signs you in on all of them, because the
@@ -589,6 +589,13 @@ says yes to for these routes. So:
   a token, when its body is JSON: a page elsewhere can't send JSON there
   without the same preflight either. All it does is make an empty,
   signed-out session row.
+- So does a Canopy site asking with its key: `POST /api/people/lookup`
+  with `Authorization: Bearer cnp_…`. The reasoning is the same: the key
+  is a header no browser attaches by itself, the site routes never read
+  the cookie (the visitor's session comes in `X-Canopy-Session`, which a
+  page elsewhere can't set without a preflight either), and the key is
+  then checked like any site's. The other site routes (`/api/session`,
+  `/api/people`) are GETs, which this check never looks at.
 - Nothing else does. A cookie with no bearer header still needs a
   Canopy `Origin` everywhere, app routes included (where it's then
   ignored anyway), and a bearer header on a web route changes nothing.
@@ -831,19 +838,23 @@ App, and without whether their email is proven. **An id that's missing
 from the answer is a deleted account**: the site shows them as a former
 member and keeps whatever it recorded for them.
 
-### `GET /api/people/lookup?phone=…` or `?instagram=…`: finding someone
+### `POST /api/people/lookup`: finding someone
 
 For a site the admin has switched on (**Can find people by phone number
 or Instagram**), asked as a visitor: the site passes the visitor's
 session in `X-Canopy-Session` exactly as for `/api/session`, and their
 address in `X-Canopy-Visitor-Ip` (for the per-address limit; without it
-the site's own address counts).
+the site's own address counts). What was typed goes in a JSON body,
+exactly one of `phone` or `instagram`, as a string:
 
 ```http
-GET /api/people/lookup?phone=(415)%20555-1234 HTTP/1.1
+POST /api/people/lookup HTTP/1.1
 Authorization: Bearer cnp_8vD...
 X-Canopy-Session: q3Xb...the visitor's canopy_session value
 X-Canopy-Visitor-Ip: 203.0.113.7
+Content-Type: application/json
+
+{"phone": "(415) 555-1234"}
 ```
 
 ```json
@@ -859,14 +870,24 @@ X-Canopy-Visitor-Ip: 203.0.113.7
 ```
 
 or `{"person": null}` when nobody is found: nobody with exactly that,
-someone who turned it off, more than one account with it, or one account
-whose email isn't proven. Refusals: `403
+someone who turned it off, more than one account with it, or, for a phone
+number, one account whose email isn't proven. Refusals: `403
 lookup_not_allowed` (the site isn't switched on), `401 signed_out` (no
 signed-in visitor), `403 email_unverified` (the visitor hasn't proven
 their email), `400 one_of` (not exactly one of `phone` and `instagram`),
 `400 bad_phone` / `400 bad_instagram` (it can't be one), `429
 rate_limited`. See "Finding people by phone or Instagram" for what it
 matches and why.
+
+**Why a POST.** It changes nothing, so it would naturally be a GET, but
+then the number or handle would be in the URL, and URLs get written down
+everywhere along the way: this service's and the site's error logs, a
+proxy's access log, Cloudflare's. A body isn't. It used to be `GET
+/api/people/lookup?phone=…`; nothing outside Canopy used it yet, so that
+form is gone rather than kept for compatibility (it's a 404 now). The
+site's key in `Authorization` is what lets it skip the Origin check (see
+"The Origin check"). Neither service logs request bodies, and an error's
+log line has the path without its query string.
 
 ### Using `client/canopy-account.js`
 
@@ -919,7 +940,8 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
 - `lookup(req, { phone } | { instagram })` resolves to the one person
   with exactly that, in the same shape as `people()`, or `null`. It asks
   as the visitor on `req` (cookie or bearer) and passes their address
-  along. A refusal rejects with an `Error` carrying `status` and `reason`
+  along. It's a POST with what was typed in the body, so it never shows
+  up in a URL; don't log it on the site's side either. A refusal rejects with an `Error` carrying `status` and `reason`
   (the reasons above). It isn't cached.
 - **Other people are only ever `{ id, firstName, lastName, shortName,
   photoUrl }`.** `people()` and `lookup()` give nothing else, and a site
@@ -965,7 +987,7 @@ needs it to show a name). In `server.js` that shape is
 person or a site can get and fails if any of someone else's contact
 details turns up.
 
-How the lookup works (`GET /api/people/lookup`, above):
+How the lookup works (`POST /api/people/lookup`, above):
 
 - **Exact matches only.** What's typed is cleaned exactly the way the
   profile cleans it (`cleanPhone`: E.164, +1 when there's no country

@@ -112,10 +112,26 @@ function exemptAsApp(req) {
   return req.path === `${NATIVE}/auth/begin` && !!req.is('application/json');
 }
 
+// A Canopy site asking server to server, with its key: the same reasoning
+// as the apps. The key travels in an Authorization header, which no
+// browser attaches by itself and no page elsewhere can set without a CORS
+// preflight this service never answers, and the site routes never read
+// the cookie (the visitor's session comes in X-Canopy-Session, another
+// header a page can't set). GET /api/session and /api/people never met
+// this check, being GETs; the lookup is a POST so that what's looked up
+// rides in the body rather than the URL, and this keeps it working the
+// same way. Only the site routes that change nothing are listed, and the
+// key itself is checked by requireSite.
+const SITE_POSTS = ['/api/people/lookup'];
+
+function exemptAsSite(req) {
+  return SITE_POSTS.includes(req.path) && /^Bearer\s+cnp_\S+$/i.test(String(req.get('authorization') || '').trim());
+}
+
 app.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
   if (isCanopyOrigin(req.get('origin'))) return next();
-  if (exemptAsApp(req)) return next();
+  if (exemptAsApp(req) || exemptAsSite(req)) return next();
   res.status(403).json({ error: 'requests that change something must come from a Canopy page', reason: 'bad_origin' });
 });
 
@@ -430,7 +446,9 @@ function errorAnswer(err) {
 function jsonErrors(err, req, res, next) {
   if (res.headersSent) return next(err);
   const [status, error, reason] = errorAnswer(err);
-  if (status >= 500) console.error(`[canopy-account] ${req.method} ${req.originalUrl} failed: ${(err && err.stack) || err}`);
+  // The path, never the query string: nothing that could hold someone's
+  // contact details goes in the log.
+  if (status >= 500) console.error(`[canopy-account] ${req.method} ${req.baseUrl}${req.path} failed: ${(err && err.stack) || err}`);
   res.status(status).json({ error, reason });
 }
 
@@ -1565,11 +1583,14 @@ app.get('/api/people', requireSite, (req, res) => {
 
 // ---------------- Finding someone by phone or Instagram ----------------
 //
-// GET /api/people/lookup?phone=… or ?instagram=… (one of them): the one
-// person whose profile has exactly that, in the public shape, or { person:
-// null }. For a host who already has someone's number or handle and wants
-// to invite them. It's one-way: knowing the number finds the account, and
-// the answer never carries a contact detail, not even the one asked about.
+// POST /api/people/lookup with { "phone": "…" } or { "instagram": "…" }
+// (one of them): the one person whose profile has exactly that, in the
+// public shape, or { person: null }. For a host who already has someone's
+// number or handle and wants to invite them. It's one-way: knowing the
+// number finds the account, and the answer never carries a contact detail,
+// not even the one asked about. A POST, so the number or handle is in the
+// body: URLs end up in logs (this service's, the site's, a proxy's), and a
+// body doesn't. There's no GET: nothing outside Canopy used it.
 //
 //   - The input is cleaned exactly as the profile cleans it (cleanPhone,
 //     cleanInstagram), and matched exactly. Never by prefix or anything
@@ -1578,9 +1599,10 @@ app.get('/api/people', requireSite, (req, res) => {
 //     signed in there (X-Canopy-Session, as for /api/session) whose email
 //     is proven: limits are per asker, so an asker has to be someone, and
 //     an unverified account is too cheap to make.
-//   - Nobody who turned "Let people ... find you" off, nobody when two
-//     accounts claim the same one, and never an account whose email isn't
-//     proven, though its claim still counts as one of the two (lib/db.js,
+//   - Nobody who turned "Let people ... find you" off, and nobody when two
+//     accounts claim the same one. A phone number only finds an account
+//     whose email is proven; an Instagram handle finds unverified ones too.
+//     Every account's claim counts as one of the two either way (lib/db.js,
 //     and "Finding people" in the README for why).
 //   - A miss is { person: null } and says nothing about why.
 //
@@ -1606,7 +1628,7 @@ const lookupLimits = {
   }
 };
 
-app.get('/api/people/lookup', requireSite, (req, res) => {
+app.post('/api/people/lookup', requireSite, (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!req.site.allowsLookup) return res.status(403).json({ error: 'this site may not look people up', reason: 'lookup_not_allowed' });
   const token = session.readToken(`${session.COOKIE}=${req.get('x-canopy-session') || ''}`);
@@ -1615,8 +1637,11 @@ app.get('/api/people/lookup', requireSite, (req, res) => {
   if (!asker) return res.status(401).json({ error: 'not signed in', reason: 'signed_out' });
   if (!asker.emailVerifiedAt) return res.status(403).json({ error: 'confirm your email first', reason: 'email_unverified' });
 
-  const { phone, instagram } = req.query;
-  if ((phone === undefined) === (instagram === undefined) || Array.isArray(phone) || Array.isArray(instagram)) {
+  // Strings only: exactly one of the two, as someone typed it.
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const { phone, instagram } = body;
+  if ((phone === undefined) === (instagram === undefined) || (phone !== undefined && typeof phone !== 'string')
+    || (instagram !== undefined && typeof instagram !== 'string')) {
     return res.status(400).json({ error: 'give one of phone or instagram', reason: 'one_of' });
   }
   const address = String(req.get('x-canopy-visitor-ip') || clientIp(req)).slice(0, 64);

@@ -51,6 +51,9 @@ test("one person's contact details never reach another person or a site", async 
   const strangerApp = nativeApp(server);
   await strangerApp.begin();
   const asSite = (asker) => ({ headers: { Authorization: `Bearer ${site.key}`, ...(asker ? { 'X-Canopy-Session': asker.cookie } : {}) } });
+  const lookup = (body, token) => browser(server).post('/api/people/lookup', body, {
+    headers: { Authorization: `Bearer ${site.key}`, Origin: null, 'X-Canopy-Session': token }
+  });
 
   // Everything Bob, Quinn, a stranger or the site can ask that could
   // mention Ana.
@@ -59,9 +62,9 @@ test("one person's contact details never reach another person or a site", async 
     'bob /api/session': await browser(server).get('/api/session', asSite(bob)),
     'quinn /api/session': await browser(server).get('/api/session', asSite(quinn)),
     '/api/people': await browser(server).get(`/api/people?ids=${anaId}`, asSite()),
-    'lookup by phone': await browser(server).get('/api/people/lookup?phone=4155551234', asSite(bob)),
-    'lookup by instagram': await browser(server).get('/api/people/lookup?instagram=ana.secret', asSite(bob)),
-    'quinn lookup': await browser(server).get('/api/people/lookup?phone=4155551234', asSite(quinn)),
+    'lookup by phone': await lookup({ phone: '4155551234' }, bob.cookie),
+    'lookup by instagram': await lookup({ instagram: 'ana.secret' }, bob.cookie),
+    'quinn lookup': await lookup({ phone: '4155551234' }, quinn.cookie),
     'bob profile save': await bob.patch('/api/profile', { firstName: 'Bob', lastName: 'Bell' }),
     'bob passkeys': await bob.get('/api/profile/passkeys'),
     'stranger auth state': await browser(server).get('/api/auth/state'),
@@ -74,7 +77,7 @@ test("one person's contact details never reach another person or a site", async 
     'bob app passkeys': await bobApp.get('/me/passkeys'),
     'bob app sessions': await bobApp.get('/me/sessions'),
     'bob app /api/session': await browser(server).get('/api/session', { headers: { Authorization: `Bearer ${site.key}`, 'X-Canopy-Session': bobApp.token } }),
-    'bob app lookup': await browser(server).get('/api/people/lookup?phone=4155551234', { headers: { Authorization: `Bearer ${site.key}`, 'X-Canopy-Session': bobApp.token } }),
+    'bob app lookup': await lookup({ phone: '4155551234' }, bobApp.token),
     'bob app verify start': await bobApp.post('/me/verify/start'),
     'quinn app /me': await quinnApp.get('/me'),
     'quinn app sessions': await quinnApp.get('/me/sessions'),
