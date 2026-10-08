@@ -40,7 +40,7 @@ const COPY = {
     mailFailed: "Couldn't send the email. Try again in a minute.",
     // A new account.
     profileHeading: 'Create Account',
-    signUpHint: "Next, your phone will offer to save a passkey for Canopy. That's how you'll sign in.",
+    signUpHint: 'Your phone will offer to save a passkey, which will serve as both your username and password to sign in.',
     // An email that already has an account.
     welcomeBack: 'Welcome back, {name}',
     existingHint: "Save a passkey on this phone and you're in. It'll work on every Canopy site.",
@@ -51,7 +51,6 @@ const COPY = {
     existingHintUnverified: "This account's email hadn't been confirmed. Saving a passkey on this phone confirms it, and removes the passkeys the account was set up with, so only you can get in.",
     // Quick sign-up (?quick=1): name, email, passkey; no code, no photo.
     quickHeading: 'Create Account',
-    quickHint: "Your name and email, then a passkey. That's all.",
     quickHaveAccount: 'Already have a Canopy account?',
     quickSignIn: 'Sign in',
     quickTakenHeading: 'This email has an account',
