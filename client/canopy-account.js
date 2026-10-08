@@ -13,11 +13,16 @@
 //   const people = await canopy.people(ids);       // Map of id -> { firstName, ... }
 //   const found = await canopy.lookup(req, { phone: '415 555 1234' });  // or { instagram }
 //
-// req.person is { id, email, emailVerified, firstName, lastName,
-// shortName, photoUrl, venmo, phone, instagram, cashapp, findable }: the
-// visitor's own details, never to be shown to anyone else. photoUrl points at the
-// account service and works straight in an <img> on any Canopy page (the
-// browser sends the cookie along).
+// req.person is { id, emailVerified, firstName, lastName, shortName,
+// photoUrl, findable }, plus whichever of the visitor's own email, phone,
+// instagram, venmo and cashapp the account admin has granted this site in
+// the Sites tab (none, for a new site). A field that wasn't granted isn't
+// there at all; one that was granted is null when they haven't filled it
+// in. They're the visitor's own details, never to be shown to anyone else,
+// and a site that doesn't show them shouldn't be granted them: what it's
+// never sent can't leak from it. photoUrl points at the account service
+// and works straight in an <img> on any Canopy page (the browser sends the
+// cookie along).
 //
 // Who the visitor is comes from their canopy_session cookie, or from an
 // `Authorization: Bearer <token>` header carrying the same 43-character

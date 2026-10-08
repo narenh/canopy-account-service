@@ -41,7 +41,9 @@ is this**, **what's their name and photo**, and **are they signed in**.
   owner types a code sent there), reset passkeys, send a setup link or
   delete; the **Sites** allowed to ask about people, each with switches
   for whether it **allows quick (unverified) accounts** and whether it
-  **can find people by phone number or Instagram**; and the sign-in
+  **can find people by phone number or Instagram**, and a box for each of
+  the visitor's own contact details it may be told (none for a new
+  site); and the sign-in
   page's logo and backdrop (each can be removed again).
 - The **iOS and Android apps** sign in through `/api/native/v1`, with
   the same passkeys, codes and quick sign-up, and get a token to send as
@@ -730,7 +732,8 @@ replaces it (the old one stops working right away), and **Cut off**
 stops that site and no other. A site that's been cut off gets back in by
 being given a new key. Each site also has the switch **Allows quick
 (unverified) accounts**, off unless the admin turns it on (see "Quick
-sign-up").
+sign-up"), and a box for each of the visitor's own contact details it may
+be told (see "What a site is told about the visitor").
 
 ### `GET /api/session`: who's visiting
 
@@ -798,7 +801,8 @@ the visitor's cookie or from an app's `Authorization: Bearer` header.
 Apps get one by signing in through `/api/native/v1` (see "Apps"). Sites
 only have to accept the header, which `client/canopy-account.js` does.
 `photoUrl` is `null` for someone with no photo, and `venmo`, `phone`,
-`instagram` and `cashapp` are each `null` when there isn't one. They're
+`instagram` and `cashapp` are each `null` when there isn't one, and left
+out altogether when the site hasn't been granted them (below). They're
 all set on the profile page. `phone` is E.164 (`+` and the country code;
 US and Canadian numbers are typed without the +1). `instagram`, `venmo`
 and `cashapp` come without their `@` or `$`; Instagram names are
@@ -807,6 +811,32 @@ who know your phone number or Instagram find you". This is the one
 answer with contact details in it, and they're the visitor's own: a site
 shows them to that visitor and nobody else. Answers are `Cache-Control:
 no-store`.
+
+#### What a site is told about the visitor
+
+Each site is granted, in the Sites tab, which of the visitor's own
+`email`, `phone`, `instagram`, `venmo` and `cashapp` its `/api/session`
+answer carries. **A new site gets none of them.** The id, names, photo,
+`emailVerified` and `findable` always come; they're what every site needs
+to show who's signed in.
+
+The ones not granted are **left out of `person` altogether**, not sent as
+`null`. `null` already means "they haven't filled it in", and a site that
+reads a missing field as that would tell someone their phone is blank
+when it's only that the site was never told. Absent means "not yours to
+know". A site that wasn't granted a field and shows one anyway has a bug,
+and it shows up as `undefined`.
+
+Why less is safer: a site can only leak what it's sent. Every Canopy
+site's server sees these answers, and so does whatever it logs or caches
+them in. A site that only shows a name and a photo (events) should be
+granted nothing, and then its database, its logs and its error reports
+never hold anyone's phone number. Grant a field to a site that shows it
+to the person (tickets shows Venmo next to an order, say) and to no other.
+
+Sites that existed before this (schema version 8) were granted all five,
+which is what they were getting, so nothing that works stopped working.
+Untick what they don't use.
 
 ### `GET /api/people?ids=…`: everyone else
 
@@ -1135,7 +1165,9 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
    account is the admin, and you land on the Account Manager.
 8. **Add each Canopy site** in the Account Manager's **Sites** tab (e.g.
    `tickets`), and give the key it shows, once, to that site as its
-   `CANOPY_ACCOUNT_KEY` (see "For Canopy sites").
+   `CANOPY_ACCOUNT_KEY` (see "For Canopy sites"). Tick only the contact
+   details that site shows people about themselves; events needs none
+   (see "What a site is told about the visitor").
 
 ### Confirming the volume is attached
 
@@ -1232,7 +1264,9 @@ unverified accounts not allowed. Version 6 added the lookup: everyone
 already here gets `FINDABLE_BY_DEFAULT`, and no site may look people up
 until the admin switches it on. Version 7 added what each session is
 (`client_kind`, `client_name`) and when it signed in: every signed-in
-session already here is a browser's, signed in when it started.
+session already here is a browser's, signed in when it started. Version 8
+added which contact details each site is told (`apps.contact_fields`):
+every site already here keeps all five, and a new one starts with none.
 
 **Backups.** Two layers, the same as tickets:
 

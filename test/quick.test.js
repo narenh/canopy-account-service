@@ -24,6 +24,8 @@ test('quick sign-up and verification', async (t) => {
   const adminId = (await admin.signUp('host@example.com', 'Hana', 'Host')).data.person.id;
   // tickets doesn't allow unverified accounts; events does.
   const tickets = (await admin.post('/api/admin/apps', { name: 'tickets' })).data;
+  // Tickets shows people their own email, so it's been granted that.
+  await admin.patch(`/api/admin/apps/${tickets.app.id}`, { contactFields: ['email'] });
   const events = (await admin.post('/api/admin/apps', { name: 'events' })).data;
   const switched = await admin.patch(`/api/admin/apps/${events.app.id}`, { allowsUnverified: true });
   assert.equal(switched.status, 200, switched.text);

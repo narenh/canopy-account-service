@@ -5,7 +5,8 @@ const crypto = require('crypto');
 const multer = require('multer');
 const webauthn = require('@simplewebauthn/server');
 
-const store = require('./lib/db').init();
+const db = require('./lib/db');
+const store = db.init();
 const photoStore = require('./lib/photoStore');
 const { createImageStore } = require('./lib/uploadedImage');
 const session = require('./lib/session');
@@ -380,6 +381,13 @@ function personView(req, p) {
 // a number finds the account; the account never gives up its numbers.
 function publicPersonView(req, p) {
   return { id: p.id, firstName: p.firstName, lastName: p.lastName, shortName: p.shortName, photoUrl: photoUrlFor(req, p) };
+}
+
+// personView, for a site: only the contact details it's been granted.
+function siteView(req, p) {
+  const view = personView(req, p);
+  db.CONTACT_FIELDS.forEach((f) => { if (!req.site.contactFields.includes(f)) delete view[f]; });
+  return view;
 }
 
 function meView(req) {
@@ -1511,12 +1519,21 @@ app.post('/api/admin/apps/:id/rekey', (req, res) => {
   res.json(result);
 });
 
-// A site's switches: { allowsUnverified, allowsLookup }.
+// A site's switches: { allowsUnverified, allowsLookup, contactFields }.
+// contactFields is the whole list of the visitor's own contact details
+// /api/session tells it, from db.CONTACT_FIELDS.
 app.patch('/api/admin/apps/:id', (req, res) => {
   const body = req.body || {};
   const settings = {};
   if (body.allowsUnverified !== undefined) settings.allowsUnverified = !!body.allowsUnverified;
   if (body.allowsLookup !== undefined) settings.allowsLookup = !!body.allowsLookup;
+  if (body.contactFields !== undefined) {
+    const fields = body.contactFields;
+    if (!Array.isArray(fields) || !fields.every((f) => db.CONTACT_FIELDS.includes(f))) {
+      return res.status(400).json({ error: `contactFields is a list of ${db.CONTACT_FIELDS.join(', ')}`, reason: 'bad_contact_fields' });
+    }
+    settings.contactFields = fields;
+  }
   const site = store.setAppSettings(req.params.id, settings);
   if (!site) return res.status(404).json({ error: 'not found' });
   res.json({ app: site });
@@ -1548,6 +1565,13 @@ function requireSite(req, res, next) {
 // the visitor as is. No X-Canopy-Site-Host, no renewCookie: an app's
 // token has no cookie to renew.
 //
+// The visitor's contact details (email, phone, Instagram, Venmo, Cash App)
+// are only the ones the admin granted this site (apps.contact_fields, none
+// for a new site). The rest are left out of `person` altogether, rather
+// than null: null means "they haven't filled it in", and a site that
+// isn't told shouldn't be able to read it as that. What a site is never
+// sent can't leak from it, its logs or its caches.
+//
 // Someone whose email isn't proven is only signed in on a site the admin
 // lets unverified accounts into. Anywhere else the answer is { person:
 // null, unverified: true }, so the site can send them to prove it rather
@@ -1561,7 +1585,7 @@ app.get('/api/session', requireSite, (req, res) => {
   if (!person) return res.json({ person: null });
   store.touchSession(s.idHash, s.lastSeenAt);
   const body = person.emailVerifiedAt || req.site.allowsUnverified
-    ? { person: personView(req, person) }
+    ? { person: siteView(req, person) }
     : { person: null, unverified: true };
   const siteHost = req.get('x-canopy-site-host');
   if (siteHost && session.needsRenewal(s)) {

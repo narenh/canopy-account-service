@@ -47,6 +47,10 @@
   /* A site's switches, under its name. */
   .switch{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-top:6px;cursor:pointer;}
   .switch input{margin:0;width:16px;height:16px;accent-color:var(--accent);}
+  /* Which of the visitor's own details a site is told: one box each. */
+  .fields{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;margin-top:8px;font-size:12px;color:var(--muted);}
+  .fields .switch{margin-top:0;}
+  .fields-hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.4;}
   .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
   .actions button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .inline-form{display:flex;gap:8px;margin-bottom:14px;}
@@ -399,6 +403,7 @@ async function loadSites(){
     who.append(name, sub);
     who.appendChild(siteSwitch(a, 'allowsUnverified', 'admin.allowsUnverified'));
     who.appendChild(siteSwitch(a, 'allowsLookup', 'admin.allowsLookup'));
+    who.appendChild(siteFields(a));
     const actions = document.createElement('div');
     actions.className = 'actions';
     actions.appendChild(button(t('admin.rekey'), 'secondary', async (b) => {
@@ -440,6 +445,44 @@ function siteSwitch(a, field, copyKey){
   text.textContent = t(copyKey);
   label.append(box, text);
   return label;
+}
+
+// The visitor's own contact details this site is told, one box each,
+// saved as soon as one is ticked. None for a new site.
+const CONTACT_FIELDS = ['email', 'phone', 'instagram', 'venmo', 'cashapp'];
+function siteFields(a){
+  const wrap = document.createElement('div');
+  const fields = document.createElement('div');
+  fields.className = 'fields';
+  const label = document.createElement('span');
+  label.textContent = t('admin.contactFields');
+  fields.appendChild(label);
+  let granted = (a.contactFields || []).slice();
+  CONTACT_FIELDS.forEach((f) => {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = granted.includes(f);
+    box.addEventListener('change', async () => {
+      const next = box.checked ? granted.concat(f) : granted.filter((x) => x !== f);
+      box.disabled = true;
+      try{
+        const r = await api('PATCH', '/api/admin/apps/' + a.id, { contactFields: next });
+        granted = r.app.contactFields;
+      }catch(e){ fail(e); box.checked = !box.checked; }
+      box.disabled = false;
+    });
+    const item = document.createElement('label');
+    item.className = 'switch';
+    const text = document.createElement('span');
+    text.textContent = t('admin.field_' + f);
+    item.append(box, text);
+    fields.appendChild(item);
+  });
+  const hint = document.createElement('div');
+  hint.className = 'fields-hint';
+  hint.textContent = t('admin.contactFieldsHint');
+  wrap.append(fields, hint);
+  return wrap;
 }
 
 document.getElementById('addSiteForm').addEventListener('submit', async (e) => {
