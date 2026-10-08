@@ -38,6 +38,14 @@
   .find-me{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.35;text-align:left;margin:4px 0 4px;cursor:pointer;}
   .find-me input{width:18px;height:18px;margin:1px 0 0;flex:0 0 auto;accent-color:var(--accent);}
   .find-hint{text-align:left;font-size:12px;margin:0 0 14px 28px;}
+  /* Deleting your account: last on the page, and quiet until it's used. */
+  .delete-card p{text-align:left;font-size:13px;color:var(--muted);margin:0 0 12px;}
+  /* Your calendar feed: subscribe, copy the link, or replace it. */
+  .calendar-card p{text-align:left;font-size:13px;margin:0 0 12px;}
+  .calendar-buttons{display:flex;gap:8px;margin-top:8px;}
+  .calendar-links{display:flex;justify-content:space-between;gap:12px;margin-top:12px;}
+  .calendar-links a{color:var(--accent-text);font-size:13px;font-weight:600;text-decoration:none;}
+  #deleteSheet input{margin-bottom:12px;}
   /* iPad and up: wider, with contact and payment fields side by side, so
      the form isn't one long column on a big screen. On a phone each
      field keeps its own line (two would be too cramped to type in). */
@@ -137,6 +145,24 @@
       <button type="submit" id="saveBtn">Save</button>
     </form>
 
+    <!-- Your Canopy calendar: one link a calendar app subscribes to, with
+         everything you host or are going to on every Canopy site. Made
+         the first time this loads (/api/profile/calendar). -->
+    <div class="card calendar-card" id="calendarCard">
+      <h3 data-copy="profile.calendarHeading"></h3>
+      <p data-copy="profile.calendarHint"></p>
+      <button type="button" id="calendarAddBtn" data-copy="profile.calendarAdd"></button>
+      <div class="calendar-buttons">
+        <button type="button" class="secondary" id="calendarCopyBtn" data-copy="profile.calendarCopy"></button>
+      </div>
+      <div class="calendar-links">
+        <a href="#" id="calendarGoogle" target="_blank" rel="noopener noreferrer" data-copy="profile.calendarGoogle"></a>
+        <button type="button" class="link-btn" id="calendarResetBtn" data-copy="profile.calendarReset"></button>
+      </div>
+      <div class="notice" id="calendarNotice"></div>
+      <div class="error" id="calendarError"></div>
+    </div>
+
     <div class="card">
       <h3 data-copy="profile.passkeysHeading"></h3>
       <div id="passkeyList"></div>
@@ -153,7 +179,37 @@
     </div>
 
     <button type="button" class="danger" id="signOutBtn" data-copy="profile.signOut"></button>
+
+    <!-- Deleting your own account: the admin's delete, done by you, behind
+         your passkey and typing DELETE. Not for the admin (it would leave
+         nobody to run Canopy accounts), who sees why instead. -->
+    <div class="card delete-card">
+      <h3 data-copy="profile.deleteHeading"></h3>
+      <p id="deleteHint" data-copy="profile.deleteHint"></p>
+      <button type="button" class="secondary" id="deleteOpenBtn" data-copy="profile.deleteButton"></button>
+    </div>
   </div>
+
+<!-- Deleting your account: your passkey, then DELETE typed out. The server
+     only needs the passkey check (see "Deleting your own account" in
+     server.js); typing it is so it can't be done by a slip of the thumb. -->
+<div class="sheet-bg hidden" id="deleteSheet">
+  <div class="card">
+    <h2 data-copy="profile.deleteSheetHeading"></h2>
+    <div id="deleteStepPasskey">
+      <p data-copy="profile.deletePasskeyHint"></p>
+      <div class="error" id="deletePasskeyError"></div>
+      <button type="button" class="passkey-btn" id="deleteReauthBtn" data-copy="profile.changeEmailPasskey"></button>
+    </div>
+    <form id="deleteStepConfirm" class="hidden">
+      <p data-copy="profile.deleteConfirmHint"></p>
+      <div class="error" id="deleteConfirmError"></div>
+      <input type="text" id="deleteWord" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="DELETE">
+      <button type="submit" class="danger" id="deleteFinalBtn" data-copy="profile.deleteFinal" disabled></button>
+    </form>
+    <p style="margin:14px 0 0"><button type="button" class="link-btn" onclick="closeDeleteSheet()">Cancel</button></p>
+  </div>
+</div>
 
 <!-- Changing your email, one step at a time: your passkey, the new
      address, the code sent to it. The server holds each step to the one
@@ -238,6 +294,9 @@ function fill(person){
   document.getElementById('cashapp').value = person.cashapp || '';
   document.getElementById('findable').checked = !!person.findable;
   document.getElementById('adminLink').classList.toggle('hidden', !person.isAdmin);
+  // The admin can't delete their own account (the server refuses too).
+  document.getElementById('deleteOpenBtn').classList.toggle('hidden', !!person.isAdmin);
+  document.getElementById('deleteHint').textContent = t(person.isAdmin ? 'profile.deleteAdmin' : 'profile.deleteHint');
   if (person.photoUrl) picker.show(person.photoUrl);
 }
 
@@ -349,6 +408,53 @@ document.getElementById('addPasskeyBtn').addEventListener('click', (e) => {
       notice.textContent = t('profile.added');
       loadPasskeys();
     }
+  });
+});
+
+// ---------------- Your calendar ----------------
+// The feed's link, made the first time this asks. "Add to Calendar" opens
+// it as webcal://, which the phone's or the computer's calendar app
+// subscribes to; Google Calendar on the web needs its own page for that.
+let calendarLink = null;
+
+function showCalendar(cal){
+  calendarLink = cal;
+  document.getElementById('calendarGoogle').href = 'https://calendar.google.com/calendar/r?cid=' + encodeURIComponent(cal.webcalUrl);
+}
+
+async function loadCalendar(){
+  const res = await fetch('/api/profile/calendar');
+  if (signedOut(res)) return;
+  if (!res.ok){ document.getElementById('calendarError').textContent = t('welcome.failed') + detail(res.status); return; }
+  showCalendar((await res.json()).calendar);
+}
+
+document.getElementById('calendarAddBtn').addEventListener('click', () => {
+  if (calendarLink) window.location.href = calendarLink.webcalUrl;
+});
+
+document.getElementById('calendarCopyBtn').addEventListener('click', async () => {
+  if (!calendarLink) return;
+  const notice = document.getElementById('calendarNotice');
+  try{
+    await navigator.clipboard.writeText(calendarLink.url);
+    notice.textContent = t('profile.calendarCopied');
+  }catch(e){
+    // No clipboard (an old browser, or not allowed): show it to copy by hand.
+    window.prompt(t('profile.calendarCopyPrompt'), calendarLink.url);
+  }
+});
+
+document.getElementById('calendarResetBtn').addEventListener('click', (e) => {
+  if (!confirm(t('profile.calendarResetConfirm'))) return;
+  const notice = document.getElementById('calendarNotice');
+  notice.textContent = '';
+  busy(e.currentTarget, document.getElementById('calendarError'), async () => {
+    const { res, data } = await postJson('/api/profile/calendar/reset');
+    if (signedOut(res)) return;
+    if (!res.ok){ document.getElementById('calendarError').textContent = t('welcome.failed') + detail(data.error || res.status); return; }
+    showCalendar(data.calendar);
+    notice.textContent = t('profile.calendarResetDone');
   });
 });
 
@@ -582,6 +688,72 @@ function verifiedNow(person){
   document.getElementById('emailNotice').textContent = t('profile.verified');
 }
 
+// ---------------- Deleting your account ----------------
+function closeDeleteSheet(){
+  document.getElementById('deleteSheet').classList.add('hidden');
+}
+function showDeleteStep(confirming){
+  document.getElementById('deleteStepPasskey').classList.toggle('hidden', confirming);
+  document.getElementById('deleteStepConfirm').classList.toggle('hidden', !confirming);
+  ['deletePasskeyError', 'deleteConfirmError'].forEach((e) => { document.getElementById(e).textContent = ''; });
+}
+document.getElementById('deleteSheet').addEventListener('click', (e) => { if (e.target.id === 'deleteSheet') closeDeleteSheet(); });
+document.getElementById('deleteOpenBtn').addEventListener('click', () => {
+  document.getElementById('deleteWord').value = '';
+  document.getElementById('deleteFinalBtn').disabled = true;
+  showDeleteStep(false);
+  document.getElementById('deleteSheet').classList.remove('hidden');
+});
+
+// 1. Your passkey, with Face ID or the like: the same check as changing
+// your email.
+document.getElementById('deleteReauthBtn').addEventListener('click', (e) => {
+  const errorEl = document.getElementById('deletePasskeyError');
+  busy(e.currentTarget, errorEl, async () => {
+    const start = await postJson('/api/auth/reauth/options');
+    if (signedOut(start.res)) return;
+    if (!start.res.ok){ errorEl.textContent = t('welcome.failed') + detail(start.data.error || start.res.status); return; }
+    let response;
+    try{
+      response = await startAuthentication({ optionsJSON: start.data.options });
+    }catch(err){
+      errorEl.textContent = passkeyErrorText(err);
+      return;
+    }
+    const { res, data } = await postJson('/api/auth/reauth/verify', { response });
+    if (!res.ok){ errorEl.textContent = t('profile.changeEmailPasskeyFailed') + detail(data.error || res.status); return; }
+    showDeleteStep(true);
+    document.getElementById('deleteWord').focus();
+  });
+});
+
+// 2. DELETE, typed out. Then it's gone, and so is this browser's session.
+function deleteWordTyped(){
+  return document.getElementById('deleteWord').value.trim().toUpperCase() === 'DELETE';
+}
+document.getElementById('deleteWord').addEventListener('input', () => {
+  document.getElementById('deleteFinalBtn').disabled = !deleteWordTyped();
+});
+document.getElementById('deleteStepConfirm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (!deleteWordTyped()) return;
+  const errorEl = document.getElementById('deleteConfirmError');
+  busy(document.getElementById('deleteFinalBtn'), errorEl, async () => {
+    const { res, data } = await sendJson('DELETE', '/api/profile');
+    if (signedOut(res)) return;
+    if (data.reason === 'reauth_required'){
+      showDeleteStep(false);
+      document.getElementById('deletePasskeyError').textContent = t('profile.changeEmailAgain');
+      return;
+    }
+    if (!res.ok){
+      errorEl.textContent = data.reason === 'is_admin' ? t('profile.deleteAdmin') : t('welcome.failed') + detail(data.error || res.status);
+      return;
+    }
+    window.location.href = '/';
+  });
+});
+
 document.getElementById('signOutBtn').addEventListener('click', (e) => {
   busy(e.currentTarget, null, async () => {
     await postJson('/api/signout');
@@ -594,6 +766,7 @@ document.getElementById('signOutBtn').addEventListener('click', (e) => {
   const { person } = await res.json();
   if (!person){ window.location.href = '/'; return; }
   fill(person);
+  loadCalendar();
   loadPasskeys();
   loadSessions();
   if (new URLSearchParams(window.location.search).has('verify')){

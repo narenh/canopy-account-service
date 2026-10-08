@@ -9,6 +9,13 @@ const path = require('path');
 const net = require('net');
 const { createAuthenticator, IOS_ORIGIN } = require('./softAuthenticator');
 
+// Fixed keys for the contact details (lib/contactCrypto.js), so a test that
+// restarts the server on the same DATA_DIR can still read what it wrote.
+const TEST_KEYS = {
+  CONTACT_ENCRYPTION_KEYS: `test1:${Buffer.alloc(32, 1).toString('base64')}`,
+  LOOKUP_HMAC_KEY: Buffer.alloc(32, 2).toString('base64')
+};
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -23,7 +30,7 @@ async function startServer(extraEnv = {}) {
   const ownDir = !extraEnv.DATA_DIR;
   const dataDir = extraEnv.DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-account-test-'));
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ADMIN_PASSWORD: 'setup-pw', NODE_ENV: 'test', SMTP_HOST: '', ...extraEnv },
+    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, ADMIN_PASSWORD: 'setup-pw', NODE_ENV: 'test', SMTP_HOST: '', ...TEST_KEYS, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let output = '';
@@ -66,6 +73,8 @@ function browser(server, { origin } = {}) {
     const h = { ...headers };
     if (cookie) h.Cookie = `canopy_session=${cookie}`;
     if (method !== 'GET' && h.Origin === undefined) h.Origin = pageOrigin;
+    // null leaves a header out altogether (a site's server sends no Origin).
+    Object.keys(h).forEach((k) => { if (h[k] === null) delete h[k]; });
     let payload;
     if (form) payload = form;
     else if (body !== undefined) { h['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
@@ -208,4 +217,4 @@ function nativeApp(server, { origin = IOS_ORIGIN, platform = 'ios', app = 'Canop
   };
 }
 
-module.exports = { startServer, browser, nativeApp };
+module.exports = { startServer, browser, nativeApp, TEST_KEYS };

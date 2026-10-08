@@ -179,13 +179,31 @@ test('accounts, end to end', async (t) => {
     assert.equal((await browser(server).get('/api/session')).status, 401, 'no key');
     const anon = await browser(server).get('/api/session', { headers: { ...auth, 'X-Canopy-Session': 'x'.repeat(43) } });
     assert.deepEqual(anon.data, { person: null });
+    // A new site is told none of the visitor's contact details: they're
+    // left out, not null.
+    assert.deepEqual(made.data.app.contactFields, []);
+    const bare = await browser(server).get('/api/session', { headers: { ...auth, 'X-Canopy-Session': ana.cookie } });
+    assert.equal(bare.data.person.id, anaId);
+    assert.deepEqual(Object.keys(bare.data.person).sort(), ['emailVerified', 'findable', 'firstName', 'id', 'lastName', 'photoUrl', 'shortName']);
+    assert.match(bare.data.person.photoUrl, /\/photo\//);
+    // The admin grants what it shows people about themselves, one by one.
+    const bad = await admin.patch(`/api/admin/apps/${made.data.app.id}`, { contactFields: ['email', 'ssn'] });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.data.reason, 'bad_contact_fields');
+    const granted = await admin.patch(`/api/admin/apps/${made.data.app.id}`, { contactFields: ['phone', 'email'] });
+    assert.deepEqual(granted.data.app.contactFields, ['email', 'phone']);
+    const some = await browser(server).get('/api/session', { headers: { ...auth, 'X-Canopy-Session': ana.cookie } });
+    assert.equal(some.data.person.email, 'ana@example.com');
+    assert.equal(some.data.person.phone, '+14155551234');
+    assert.ok(!('instagram' in some.data.person) && !('venmo' in some.data.person) && !('cashapp' in some.data.person));
+    await admin.patch(`/api/admin/apps/${made.data.app.id}`, { contactFields: ['email', 'phone', 'instagram', 'venmo', 'cashapp'] });
     const me = await browser(server).get('/api/session', { headers: { ...auth, 'X-Canopy-Session': ana.cookie } });
     assert.equal(me.data.person.id, anaId);
     assert.equal(me.data.person.email, 'ana@example.com');
     assert.equal(me.data.person.phone, '+14155551234');
     assert.equal(me.data.person.instagram, 'ana.lima');
     assert.equal(me.data.person.cashapp, 'AnaL');
-    assert.match(me.data.person.photoUrl, /\/photo\//);
+    assert.equal(me.data.person.venmo, null, 'granted but not filled in: null');
 
     const ppl = await browser(server).get(`/api/people?ids=${anaId},${adminId},00000000-0000-0000-0000-000000000000`, { headers: auth });
     assert.deepEqual(ppl.data.people.map((p) => p.id).sort(), [anaId, adminId].sort());

@@ -47,7 +47,18 @@
   /* A site's switches, under its name. */
   .switch{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-top:6px;cursor:pointer;}
   .switch input{margin:0;width:16px;height:16px;accent-color:var(--accent);}
+  /* Which of the visitor's own details a site is told: one box each. */
+  .fields{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;margin-top:8px;font-size:12px;color:var(--muted);}
+  .fields .switch{margin-top:0;}
+  .fields-hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.4;}
+  /* A site's calendar URL, under its contact details. */
+  .calendar-url{display:flex;gap:6px;margin-top:10px;}
+  .calendar-url input{margin:0;font-size:13px;padding:6px 8px;min-width:0;flex:1;}
+  .calendar-url button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+  .tag.warn{background:#b8572a;color:#ffffff;}
+  .concern{font-size:12px;color:#f3b38f;margin-top:4px;}
+  .sub-heading{font-size:14px;margin:18px 0 6px;}
   .actions button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .inline-form{display:flex;gap:8px;margin-bottom:14px;}
   .inline-form input{margin:0;}
@@ -83,6 +94,7 @@
   <div class="tabs">
     <button type="button" data-tab="people" data-copy="admin.peopleTab"></button>
     <button type="button" data-tab="sites" data-copy="admin.sitesTab"></button>
+    <button type="button" data-tab="lookups" data-copy="admin.lookupsTab"></button>
     <button type="button" data-tab="settings" data-copy="admin.settingsTab"></button>
   </div>
   <div class="error" id="pageError"></div>
@@ -99,6 +111,15 @@
       <button type="submit" id="addSiteBtn" data-copy="admin.addSite"></button>
     </form>
     <div id="siteList"></div>
+  </section>
+
+  <!-- Who's been finding people by phone or Instagram: counts, never what
+       they looked for (see "The lookup log" in the README). -->
+  <section class="panel hidden" id="lookups">
+    <p data-copy="admin.lookupsHint"></p>
+    <div id="lookupList"></div>
+    <h3 class="sub-heading hidden" id="lookupAddressesHeading" data-copy="admin.lookupAddresses"></h3>
+    <div id="lookupAddressList"></div>
   </section>
 
   <section class="panel hidden" id="settings">
@@ -189,7 +210,7 @@ applyCopy();
 document.getElementById('siteName').placeholder = t('admin.siteName');
 
 // ---------------- Tabs (in the URL hash, so reload keeps the tab) ----------------
-const TABS = ['people', 'sites', 'settings'];
+const TABS = ['people', 'sites', 'lookups', 'settings'];
 function showTab(name){
   if (!TABS.includes(name)) name = 'people';
   TABS.forEach(tab => document.getElementById(tab).classList.toggle('hidden', tab !== name));
@@ -197,6 +218,7 @@ function showTab(name){
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
   if (name === 'people') loadPeople();
   if (name === 'sites') loadSites();
+  if (name === 'lookups') loadLookups();
   if (name === 'settings') loadImages();
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -399,6 +421,8 @@ async function loadSites(){
     who.append(name, sub);
     who.appendChild(siteSwitch(a, 'allowsUnverified', 'admin.allowsUnverified'));
     who.appendChild(siteSwitch(a, 'allowsLookup', 'admin.allowsLookup'));
+    who.appendChild(siteFields(a));
+    who.appendChild(siteCalendar(a));
     const actions = document.createElement('div');
     actions.className = 'actions';
     actions.appendChild(button(t('admin.rekey'), 'secondary', async (b) => {
@@ -410,6 +434,17 @@ async function loadSites(){
       }catch(e){ fail(e); }
       loadSites();
     }));
+    if (a.calendarSecretAt){
+      actions.appendChild(button(t('admin.calendarRekey'), 'secondary', async (b) => {
+        if (!confirm(t('admin.calendarRekeyConfirm', { name: a.name }))) return;
+        b.disabled = true;
+        try{
+          const r = await api('POST', '/api/admin/apps/' + a.id + '/calendar-secret');
+          openSheet(t('admin.calendarSecretHeading', { name: a.name }), t('admin.calendarSecretHint'), r.calendarSecret);
+        }catch(e){ fail(e); }
+        loadSites();
+      }));
+    }
     if (!a.revokedAt){
       actions.appendChild(button(t('admin.revoke'), 'danger', async (b) => {
         if (!confirm(t('admin.revokeConfirm', { name: a.name }))) return;
@@ -442,6 +477,80 @@ function siteSwitch(a, field, copyKey){
   return label;
 }
 
+// The visitor's own contact details this site is told, one box each,
+// saved as soon as one is ticked. None for a new site.
+const CONTACT_FIELDS = ['email', 'phone', 'instagram', 'venmo', 'cashapp'];
+function siteFields(a){
+  const wrap = document.createElement('div');
+  const fields = document.createElement('div');
+  fields.className = 'fields';
+  const label = document.createElement('span');
+  label.textContent = t('admin.contactFields');
+  fields.appendChild(label);
+  let granted = (a.contactFields || []).slice();
+  CONTACT_FIELDS.forEach((f) => {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = granted.includes(f);
+    box.addEventListener('change', async () => {
+      const next = box.checked ? granted.concat(f) : granted.filter((x) => x !== f);
+      box.disabled = true;
+      try{
+        const r = await api('PATCH', '/api/admin/apps/' + a.id, { contactFields: next });
+        granted = r.app.contactFields;
+      }catch(e){ fail(e); box.checked = !box.checked; }
+      box.disabled = false;
+    });
+    const item = document.createElement('label');
+    item.className = 'switch';
+    const text = document.createElement('span');
+    text.textContent = t('admin.field_' + f);
+    item.append(box, text);
+    fields.appendChild(item);
+  });
+  const hint = document.createElement('div');
+  hint.className = 'fields-hint';
+  hint.textContent = t('admin.contactFieldsHint');
+  wrap.append(fields, hint);
+  return wrap;
+}
+
+// Where this site's calendar is, for everyone's Canopy calendar feed.
+// Saving one the first time makes the site's calendar secret, shown once.
+function siteCalendar(a){
+  const wrap = document.createElement('div');
+  const form = document.createElement('form');
+  form.className = 'calendar-url';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'url';
+  input.autocapitalize = 'off';
+  input.spellcheck = false;
+  input.placeholder = t('admin.calendarUrl');
+  input.setAttribute('aria-label', t('admin.calendarUrl'));
+  input.value = a.calendarUrl || '';
+  const save = document.createElement('button');
+  save.type = 'submit';
+  save.className = 'secondary';
+  save.textContent = t('admin.calendarSave');
+  form.append(input, save);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    save.disabled = true;
+    try{
+      const r = await api('PATCH', '/api/admin/apps/' + a.id, { calendarUrl: input.value.trim() });
+      if (r.calendarSecret) openSheet(t('admin.calendarSecretHeading', { name: a.name }), t('admin.calendarSecretHint'), r.calendarSecret);
+      loadSites();
+    }catch(err){ fail(err); }
+    save.disabled = false;
+  });
+  const hint = document.createElement('div');
+  hint.className = 'fields-hint';
+  hint.textContent = t('admin.calendarUrlHint') + (a.calendarSecretAt ? ' (' + t('admin.calendarSecretMade', { date: formatDate(a.calendarSecretAt) }) + ')' : '');
+  wrap.append(form, hint);
+  return wrap;
+}
+
 document.getElementById('addSiteForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const input = document.getElementById('siteName');
@@ -455,6 +564,64 @@ document.getElementById('addSiteForm').addEventListener('submit', async (e) => {
   btn.disabled = false;
   loadSites();
 });
+
+// ---------------- Lookups ----------------
+// The last week's lookups by phone or Instagram, by asker (and any
+// address that looks wrong): how many, how many found someone, how many
+// were refused. What they looked for is never shown, or even stored.
+function lookupLine(r){
+  const rate = r.lookups ? Math.round(100 * r.missed / r.lookups) : 0;
+  return t('admin.lookupCounts', { lookups: r.lookups, found: r.found, rate, refused: r.refused });
+}
+function lookupRow(name, r, sub){
+  const row = document.createElement('div');
+  row.className = 'row';
+  const who = document.createElement('div');
+  who.className = 'who';
+  const top = document.createElement('div');
+  top.className = 'name';
+  top.textContent = name;
+  if (r.concerns.length){
+    const tag = document.createElement('span');
+    tag.className = 'tag warn';
+    tag.textContent = t('admin.suspicious');
+    top.appendChild(tag);
+  }
+  const line = document.createElement('div');
+  line.className = 'sub';
+  line.textContent = lookupLine(r) + ' · ' + sub;
+  who.append(top, line);
+  r.concerns.forEach((c) => {
+    const el = document.createElement('div');
+    el.className = 'concern';
+    el.textContent = c;
+    who.appendChild(el);
+  });
+  row.appendChild(who);
+  return row;
+}
+async function loadLookups(){
+  document.getElementById('pageError').textContent = '';
+  let data;
+  try{ data = await api('GET', '/api/admin/lookups'); }catch(e){ fail(e); return; }
+  const list = document.getElementById('lookupList');
+  list.innerHTML = '';
+  if (!data.askers.length){
+    const p = document.createElement('p');
+    p.textContent = t('admin.noLookups');
+    list.appendChild(p);
+  }
+  data.askers.forEach((a) => {
+    const sub = t('admin.lookupWhere', { sites: a.sites.join(', '), date: formatDate(a.lastAt) });
+    list.appendChild(lookupRow(a.name || t('admin.formerMember'), a, sub));
+  });
+  const addresses = document.getElementById('lookupAddressList');
+  addresses.innerHTML = '';
+  document.getElementById('lookupAddressesHeading').classList.toggle('hidden', !data.addresses.length);
+  data.addresses.forEach((a) => {
+    addresses.appendChild(lookupRow(t('admin.address', { id: a.address }), a, t('admin.lookupAskers', { count: a.askers, date: formatDate(a.lastAt) })));
+  });
+}
 
 // ---------------- Settings: logo and backdrop ----------------
 function loadImages(){

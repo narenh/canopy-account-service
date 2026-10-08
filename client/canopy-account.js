@@ -13,11 +13,27 @@
 //   const people = await canopy.people(ids);       // Map of id -> { firstName, ... }
 //   const found = await canopy.lookup(req, { phone: '415 555 1234' });  // or { instagram }
 //
-// req.person is { id, email, emailVerified, firstName, lastName,
-// shortName, photoUrl, venmo, phone, instagram, cashapp, findable }: the
-// visitor's own details, never to be shown to anyone else. photoUrl points at the
-// account service and works straight in an <img> on any Canopy page (the
-// browser sends the cookie along).
+// A site with a calendar (it shows up in each person's Canopy calendar
+// feed) also passes `calendarSecret: process.env.CANOPY_CALENDAR_SECRET`
+// (from the same Sites tab), and checks the account service's requests
+// with it:
+//
+//   app.get('/api/calendar/:personId', (req, res) => {
+//     const personId = canopy.verifyCalendarRequest(req);   // or null
+//     if (!personId) return res.status(401).json({ error: 'not the account service' });
+//     res.json({ entries: [...] });   // see the account service's README
+//   });
+//
+// req.person is { id, emailVerified, firstName, lastName, shortName,
+// photoUrl, findable }, plus whichever of the visitor's own email, phone,
+// instagram, venmo and cashapp the account admin has granted this site in
+// the Sites tab (none, for a new site). A field that wasn't granted isn't
+// there at all; one that was granted is null when they haven't filled it
+// in. They're the visitor's own details, never to be shown to anyone else,
+// and a site that doesn't show them shouldn't be granted them: what it's
+// never sent can't leak from it. photoUrl points at the account service
+// and works straight in an <img> on any Canopy page (the browser sends the
+// cookie along).
 //
 // Who the visitor is comes from their canopy_session cookie, or from an
 // `Authorization: Bearer <token>` header carrying the same 43-character
@@ -45,7 +61,12 @@ const crypto = require('crypto');
 const COOKIE = 'canopy_session';
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
-module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } = {}) {
+// How far the account service's clock and this one's may disagree, and so
+// how long a signed calendar request can be replayed, in seconds.
+const CALENDAR_SKEW_S = 5 * 60;
+const CALENDAR_AUTH_RE = /^Canopy-Calendar\s+t=(\d{1,12}),\s*sig=([0-9a-fA-F]{64})$/;
+
+module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000, calendarSecret } = {}) {
   if (!url || !key) throw new Error('canopy-account: url and key are both required');
   const base = String(url).replace(/\/+$/, '');
   const headers = { Authorization: `Bearer ${key}` };
@@ -204,24 +225,53 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
   // site the account admin lets look people up. Anything else rejects
   // with an Error carrying `status` and `reason`: 401 signed_out, 403
   // email_unverified or lookup_not_allowed, 400 bad_phone, bad_instagram
-  // or one_of, 429 rate_limited. Not cached.
+  // or one_of, 429 rate_limited. Not cached. It's a POST with the number
+  // or handle in the body, never in the URL: don't log `query` either.
   async function lookup(req, query) {
     const { token } = readToken(req);
     if (!token) throw lookupError(401, 'signed_out', 'not signed in');
     const q = query || {};
-    const params = new URLSearchParams();
-    if (q.phone != null && q.instagram == null) params.set('phone', String(q.phone));
-    else if (q.instagram != null && q.phone == null) params.set('instagram', String(q.instagram));
+    let body;
+    if (q.phone != null && q.instagram == null) body = { phone: String(q.phone) };
+    else if (q.instagram != null && q.phone == null) body = { instagram: String(q.instagram) };
     else throw lookupError(400, 'one_of', 'give one of phone or instagram');
     // The visitor's address, for the per-address limit.
     const ip = (typeof req.get === 'function' && req.get('cf-connecting-ip')) || req.ip || '';
-    const r = await fetch(`${base}/api/people/lookup?${params}`, {
-      headers: { ...headers, 'X-Canopy-Session': token, 'X-Canopy-Visitor-Ip': ip }
+    // A POST, so the number or handle is in the body and never in a URL
+    // (which ends up in logs along the way).
+    const r = await fetch(`${base}/api/people/lookup`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json', 'X-Canopy-Session': token, 'X-Canopy-Visitor-Ip': ip },
+      body: JSON.stringify(body)
     });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw lookupError(r.status, body.reason, body.error || `account service answered ${r.status}`);
-    return body.person || null;
+    const answer = await r.json().catch(() => ({}));
+    if (!r.ok) throw lookupError(r.status, answer.reason, answer.error || `account service answered ${r.status}`);
+    return answer.person || null;
   }
 
-  return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl };
+  // The person whose calendar the account service is asking for, if this
+  // request really is the account service's: GET .../api/calendar/<personId>
+  // with `Authorization: Canopy-Calendar t=<unix seconds>, sig=<hex>`,
+  // sig being HMAC-SHA256 with this site's calendar secret of
+  // "canopy-calendar-v1\n<personId>\n<t>", and t within five minutes of
+  // now. The secret never travels, only a signature good for that one
+  // person for those few minutes. null for anything else, including a
+  // site with no calendarSecret set. The person id comes from the path
+  // (req.params.personId, or the URL's last part).
+  function verifyCalendarRequest(req) {
+    if (!calendarSecret) return null;
+    const m = CALENDAR_AUTH_RE.exec(String(req.headers.authorization || '').trim());
+    if (!m) return null;
+    let personId = req.params && req.params.personId;
+    if (!personId) {
+      const path = String(req.originalUrl || req.url || '').split('?')[0];
+      try { personId = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1)); } catch (e) { return null; }
+    }
+    if (!personId || personId.length > 100) return null;
+    if (Math.abs(Date.now() / 1000 - Number(m[1])) > CALENDAR_SKEW_S) return null;
+    const want = crypto.createHmac('sha256', String(calendarSecret)).update(`canopy-calendar-v1\n${personId}\n${m[1]}`).digest();
+    return crypto.timingSafeEqual(want, Buffer.from(m[2], 'hex')) ? personId : null;
+  }
+
+  return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl, verifyCalendarRequest };
 };

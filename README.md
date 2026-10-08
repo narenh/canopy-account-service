@@ -17,10 +17,14 @@ is this**, **what's their name and photo**, and **are they signed in**.
   signed in until then (see "Quick sign-up").
 - At **`/profile`** they change their name, photo, phone, Instagram,
   Venmo and Cash App, choose whether **people who know their phone number
-  or Instagram can find them** (on unless they turn it off), see their
+  or Instagram can find them** (on unless they turn it off), get their **Canopy calendar** (one link a calendar app
+  subscribes to, with what they're hosting or going to on every Canopy
+  site; see "Calendar feed"), see their
   passkeys (add one, remove one they've
   lost), see **where they're signed in** (each browser and app, with
-  **Sign out** on any of them, and **Sign out everywhere**) and sign out.
+  **Sign out** on any of them, and **Sign out everywhere**), sign out,
+  and **delete their account** (their passkey, then typing DELETE; see
+  "Deleted accounts").
   **Changing their email** takes three steps: their
   passkey (Face ID or the like, so a borrowed unlocked phone or a stolen
   cookie isn't enough; good for 15 minutes and one change), a code sent
@@ -41,7 +45,10 @@ is this**, **what's their name and photo**, and **are they signed in**.
   owner types a code sent there), reset passkeys, send a setup link or
   delete; the **Sites** allowed to ask about people, each with switches
   for whether it **allows quick (unverified) accounts** and whether it
-  **can find people by phone number or Instagram**; and the sign-in
+  **can find people by phone number or Instagram**, a box for each of
+  the visitor's own contact details it may be told (none for a new
+  site), and where its **calendar** is, if it has one; **Lookups**, who has been finding people by phone or Instagram
+  and how often they missed (see "The lookup log"); and the sign-in
   page's logo and backdrop (each can be removed again).
 - The **iOS and Android apps** sign in through `/api/native/v1`, with
   the same passkeys, codes and quick sign-up, and get a token to send as
@@ -49,8 +56,12 @@ is this**, **what's their name and photo**, and **are they signed in**.
 - Every Canopy site asks it, server to server, who the visitor is
   (`GET /api/session`), what other people are called
   (`GET /api/people`), and, if it's allowed to, who has a phone number or
-  Instagram someone typed (`GET /api/people/lookup`). `client/canopy-account.js` is the one file a site
+  Instagram someone typed (`POST /api/people/lookup`). `client/canopy-account.js` is the one file a site
   copies in to do that.
+- It asks the sites with a calendar, server to server the other way
+  round, what's in each person's calendar (`GET
+  <site>/api/calendar/<personId>`, signed), and serves it all as one
+  feed at **`/cal/<secret>.ics`** (see "Calendar feed").
 
 Signing in on one Canopy site signs you in on all of them, because the
 session cookie belongs to `canopysf.com` rather than to any one
@@ -65,8 +76,10 @@ for anyone (the one setup password is for the admin and the server, see
 "The first admin"). The only emails it sends are sign-in codes and, when
 someone changes their email, a notice to the old address (or, for an
 address that already has an account, a notice there instead of a code). It doesn't
-hold any site's own data either: tickets' seats, orders and calendar
-feeds stay in tickets, keyed by the person ids from here.
+hold any site's own data either: tickets' seats and orders stay in
+tickets, keyed by the person ids from here. The calendar feed is made
+from what each site says when it's asked, kept in memory for a few
+minutes, never written down here.
 
 ## How it works
 
@@ -80,10 +93,22 @@ feeds stay in tickets, keyed by the person ids from here.
 - `lib/db.js` is persistence: one SQLite file, `DATA_DIR/account.db`.
   Its tables are `people`, `passkeys`, `sessions` (one per browser, keyed
   by the hash of its cookie), `setup_links` (hashed), `apps` (the sites,
-  with hashed keys) and `meta` (who the admin is). The schema version
+  with hashed keys), `lookup_log` (every lookup by phone or Instagram),
+  `calendar_feeds` (each person's calendar link, hashed and sealed) and
+  `meta` (who the admin is). Every contact detail in
+  it is encrypted, here and nowhere else (see "Contact details at
+  rest"). The schema version
   lives in SQLite's `user_version`. A database from a version this code
   doesn't know is refused at startup rather than opened. It also takes
   the daily snapshots (see "Storage & backups").
+- `lib/contactCrypto.js` seals and opens contact details (AES-256-GCM)
+  and makes the keyed hashes they're looked up by, from
+  `CONTACT_ENCRYPTION_KEYS` and `LOOKUP_HMAC_KEY`.
+- `lib/calendar.js` is the calendar feed's asking: which sites, the
+  signed request, what's accepted back, the five minutes each answer is
+  kept and the last good one that stands in for a site that's down.
+  `lib/ics.js` writes the merged entries out as iCalendar (RFC 5545), by
+  hand.
 - `lib/session.js` is the `canopy_session` cookie: reading it, the
   `Set-Cookie` that makes or renews it, and when it's due for renewal.
   It also reads an app's `Authorization: Bearer` token, and names a
@@ -134,8 +159,10 @@ feeds stay in tickets, keyed by the person ids from here.
   to end with no browser, and it signs as a page or as the iOS or
   Android app. `test/docs.test.js` fails if a route under
   `/api/native/v1` is missing from `openapi.yaml` or the other way
-  around (its one dev dependency, `yaml`, reads the spec). `npm test`
-  runs them all.
+  around (its dev dependency `yaml` reads the spec). The calendar feed's
+  tests read every feed with `ical.js`, a strict iCalendar parser (the
+  other dev dependency), plus the line-by-line rules it lets slide
+  (`test/icsCheck.js`). `npm test` runs them all.
 
 `GET /healthz` answers `{"ok":true}`, and `GET /favicon.ico` answers an
 empty 204, so pages don't log a 404 for the icon they don't have.
@@ -371,6 +398,36 @@ simply stops existing here. Each site keeps its own records under that
 id, and when `/api/people` leaves an id out, the site shows that person
 as a **former member**. No one is notified.
 
+Their calendar link stops working at the same moment (a 404, like any
+wrong link), so a calendar subscribed to it stops updating; what's
+already in that calendar stays until its app gives up on the feed.
+
+**People can delete their own account**, from the bottom of their
+profile (or `DELETE /api/native/v1/me` in an app). It does exactly what
+the admin's delete does, and then signs that browser out. It takes the
+same passkey check as changing an email (Face ID or the like, within 15
+minutes), so a borrowed unlocked phone or a stolen cookie can't do it;
+the page also has them type `DELETE`, so it can't happen by a slip of the
+thumb (the server needs only the passkey check). The email is free again
+afterwards: signing up with it makes a new, unrelated account.
+
+**The admin can't delete their own account**, this way or from the
+Account Manager (`409 is_admin`): there would be no admin, and the
+install would be open to whoever next enters the setup password. Their
+profile says so in place of the button.
+
+**What other sites keep.** Deleting an account here deletes what this
+service holds about them, and nothing on any other site: each one keeps
+what it recorded, under the id, as it sees fit. Events keeps their RSVPs
+(so a guest count doesn't change after the fact), their wall posts and
+anything else they did there, all under the id and all shown as "Former
+member" with no photo. The text they wrote on a wall stays as written;
+whether events should also delete it is an open question for events (see
+its decision log), not something this service can do. Tickets keeps its
+orders the same way. Anyone deleting their account to be forgotten
+should be told that: their name and photo are gone everywhere, and what
+they wrote on a site is that site's to remove.
+
 ## The session cookie
 
 `canopy_session` is a random token, 32 bytes from the OS's random source
@@ -414,7 +471,11 @@ something. With the plain token in it, any of those copies would be a
 pocketful of working sign-ins. With the hash, it's useless for that,
 because there's no getting from the hash back to the cookie. The same
 goes for the other secrets: setup link codes, site keys and emailed
-codes are all stored as hashes.
+codes are all stored as hashes. Contact details, which have to be read
+back, are encrypted instead (see "Contact details at rest"). Two secrets
+are both: a person's calendar link (looked up by its hash, sealed so
+their profile can show it again) and each site's calendar secret (sealed
+only: it's what requests are signed with, so it has to be read back).
 
 **Every Canopy site's server sees the cookie.** It's sent to all of
 `canopysf.com`, and the sites pass it on to `/api/session`. That's fine
@@ -589,6 +650,13 @@ says yes to for these routes. So:
   a token, when its body is JSON: a page elsewhere can't send JSON there
   without the same preflight either. All it does is make an empty,
   signed-out session row.
+- So does a Canopy site asking with its key: `POST /api/people/lookup`
+  with `Authorization: Bearer cnp_…`. The reasoning is the same: the key
+  is a header no browser attaches by itself, the site routes never read
+  the cookie (the visitor's session comes in `X-Canopy-Session`, which a
+  page elsewhere can't set without a preflight either), and the key is
+  then checked like any site's. The other site routes (`/api/session`,
+  `/api/people`) are GETs, which this check never looks at.
 - Nothing else does. A cookie with no bearer header still needs a
   Canopy `Origin` everywhere, app routes included (where it's then
   ignored anyway), and a bearer header on a web route changes nothing.
@@ -635,6 +703,8 @@ trusted for this.
 | Changing your email (new addresses) | 5 per person per hour | (the code limits) | (the code limits) |
 | New sessions not yet signed in | | 100 per hour | 1,000 per hour |
 | Lookups by phone or Instagram | 30 per asker per hour, 100 per day | 60 per hour | 300 per hour |
+| Calendar feed fetches | 120 per feed per hour | 1,200 per hour | |
+| Unknown calendar links | | 60 per hour | |
 
 On top of that, each code dies after 5 wrong tries. The apps count in
 the same counters as the web (they run the same code, see "Apps"), so
@@ -692,6 +762,11 @@ make one: only these POSTs do.
 **Why those numbers for lookups.** See "Finding people by phone or
 Instagram".
 
+**Why those numbers for the calendar feed.** See "Calendar feed". There's
+no ceiling across everyone: calendar apps fetch on their own, all day,
+and a ceiling tripping would stop everyone's calendar updating at once,
+for an hour, which is the one thing the feed is for.
+
 **What that means for one account.** With 5 codes an hour and 5 tries on
 each, someone going after one email gets **at most 25 guesses an hour**,
 each one-in-a-million. That's about 1 in 40,000 per hour, or about 0.06%
@@ -723,7 +798,8 @@ replaces it (the old one stops working right away), and **Cut off**
 stops that site and no other. A site that's been cut off gets back in by
 being given a new key. Each site also has the switch **Allows quick
 (unverified) accounts**, off unless the admin turns it on (see "Quick
-sign-up").
+sign-up"), and a box for each of the visitor's own contact details it may
+be told (see "What a site is told about the visitor").
 
 ### `GET /api/session`: who's visiting
 
@@ -791,7 +867,8 @@ the visitor's cookie or from an app's `Authorization: Bearer` header.
 Apps get one by signing in through `/api/native/v1` (see "Apps"). Sites
 only have to accept the header, which `client/canopy-account.js` does.
 `photoUrl` is `null` for someone with no photo, and `venmo`, `phone`,
-`instagram` and `cashapp` are each `null` when there isn't one. They're
+`instagram` and `cashapp` are each `null` when there isn't one, and left
+out altogether when the site hasn't been granted them (below). They're
 all set on the profile page. `phone` is E.164 (`+` and the country code;
 US and Canadian numbers are typed without the +1). `instagram`, `venmo`
 and `cashapp` come without their `@` or `$`; Instagram names are
@@ -800,6 +877,32 @@ who know your phone number or Instagram find you". This is the one
 answer with contact details in it, and they're the visitor's own: a site
 shows them to that visitor and nobody else. Answers are `Cache-Control:
 no-store`.
+
+#### What a site is told about the visitor
+
+Each site is granted, in the Sites tab, which of the visitor's own
+`email`, `phone`, `instagram`, `venmo` and `cashapp` its `/api/session`
+answer carries. **A new site gets none of them.** The id, names, photo,
+`emailVerified` and `findable` always come; they're what every site needs
+to show who's signed in.
+
+The ones not granted are **left out of `person` altogether**, not sent as
+`null`. `null` already means "they haven't filled it in", and a site that
+reads a missing field as that would tell someone their phone is blank
+when it's only that the site was never told. Absent means "not yours to
+know". A site that wasn't granted a field and shows one anyway has a bug,
+and it shows up as `undefined`.
+
+Why less is safer: a site can only leak what it's sent. Every Canopy
+site's server sees these answers, and so does whatever it logs or caches
+them in. A site that only shows a name and a photo (events) should be
+granted nothing, and then its database, its logs and its error reports
+never hold anyone's phone number. Grant a field to a site that shows it
+to the person (tickets shows Venmo next to an order, say) and to no other.
+
+Sites that existed before this (schema version 8) were granted all five,
+which is what they were getting, so nothing that works stopped working.
+Untick what they don't use.
 
 ### `GET /api/people?ids=…`: everyone else
 
@@ -831,19 +934,23 @@ App, and without whether their email is proven. **An id that's missing
 from the answer is a deleted account**: the site shows them as a former
 member and keeps whatever it recorded for them.
 
-### `GET /api/people/lookup?phone=…` or `?instagram=…`: finding someone
+### `POST /api/people/lookup`: finding someone
 
 For a site the admin has switched on (**Can find people by phone number
 or Instagram**), asked as a visitor: the site passes the visitor's
 session in `X-Canopy-Session` exactly as for `/api/session`, and their
 address in `X-Canopy-Visitor-Ip` (for the per-address limit; without it
-the site's own address counts).
+the site's own address counts). What was typed goes in a JSON body,
+exactly one of `phone` or `instagram`, as a string:
 
 ```http
-GET /api/people/lookup?phone=(415)%20555-1234 HTTP/1.1
+POST /api/people/lookup HTTP/1.1
 Authorization: Bearer cnp_8vD...
 X-Canopy-Session: q3Xb...the visitor's canopy_session value
 X-Canopy-Visitor-Ip: 203.0.113.7
+Content-Type: application/json
+
+{"phone": "(415) 555-1234"}
 ```
 
 ```json
@@ -859,14 +966,24 @@ X-Canopy-Visitor-Ip: 203.0.113.7
 ```
 
 or `{"person": null}` when nobody is found: nobody with exactly that,
-someone who turned it off, more than one account with it, or one account
-whose email isn't proven. Refusals: `403
+someone who turned it off, more than one account with it, or, for a phone
+number, one account whose email isn't proven. Refusals: `403
 lookup_not_allowed` (the site isn't switched on), `401 signed_out` (no
 signed-in visitor), `403 email_unverified` (the visitor hasn't proven
 their email), `400 one_of` (not exactly one of `phone` and `instagram`),
 `400 bad_phone` / `400 bad_instagram` (it can't be one), `429
 rate_limited`. See "Finding people by phone or Instagram" for what it
 matches and why.
+
+**Why a POST.** It changes nothing, so it would naturally be a GET, but
+then the number or handle would be in the URL, and URLs get written down
+everywhere along the way: this service's and the site's error logs, a
+proxy's access log, Cloudflare's. A body isn't. It used to be `GET
+/api/people/lookup?phone=…`; nothing outside Canopy used it yet, so that
+form is gone rather than kept for compatibility (it's a 404 now). The
+site's key in `Authorization` is what lets it skip the Origin check (see
+"The Origin check"). Neither service logs request bodies, and an error's
+log line has the path without its query string.
 
 ### Using `client/canopy-account.js`
 
@@ -919,7 +1036,8 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
 - `lookup(req, { phone } | { instagram })` resolves to the one person
   with exactly that, in the same shape as `people()`, or `null`. It asks
   as the visitor on `req` (cookie or bearer) and passes their address
-  along. A refusal rejects with an `Error` carrying `status` and `reason`
+  along. It's a POST with what was typed in the body, so it never shows
+  up in a URL; don't log it on the site's side either. A refusal rejects with an `Error` carrying `status` and `reason`
   (the reasons above). It isn't cached.
 - **Other people are only ever `{ id, firstName, lastName, shortName,
   photoUrl }`.** `people()` and `lookup()` give nothing else, and a site
@@ -944,6 +1062,218 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
   day-long private cache never shows an old one.
 - For "Sign out", link to `canopy.signOutUrl(req)`. That signs the
   browser out of every Canopy site and comes back.
+- `verifyCalendarRequest(req)` is for a site with a calendar: see the
+  next section.
+
+### `GET <site>/api/calendar/<personId>`: the site's calendar
+
+The one call that goes the other way: **this service asks the site**,
+for each person's calendar feed (see "Calendar feed"). A site with a
+calendar implements it; one without doesn't need to. Events is the
+first.
+
+**Setting a site up.** In the Sites tab, put the site's base URL in its
+**Calendar URL** and Save: `https://events.canopysf.com`, or its address
+on Coolify's internal network (`http://<its container>:3000`). The feed
+asks `<that>/api/calendar/<personId>`. The first time, that shows a
+**calendar secret**, once, like a key: set it on the site as
+`CANOPY_CALENDAR_SECRET`, and hand it to the client file:
+
+```js
+const canopy = require('./lib/canopy-account')({
+  url: process.env.CANOPY_ACCOUNT_URL,
+  key: process.env.CANOPY_ACCOUNT_KEY,
+  calendarSecret: process.env.CANOPY_CALENDAR_SECRET
+});
+
+app.get('/api/calendar/:personId', (req, res) => {
+  const personId = canopy.verifyCalendarRequest(req);
+  if (!personId) return res.status(401).json({ error: 'not the account service', reason: 'unauthorized' });
+  res.set('Cache-Control', 'no-store');
+  res.json({ entries: entriesFor(personId) });
+});
+```
+
+**New calendar secret** replaces it, and the old one stops working at
+once (until the site has the new one, feeds use that site's last good
+answers). Emptying the Calendar URL takes the site out of every feed, and
+so does **Cut off**.
+
+**How the site knows it's this service asking.** Every request is signed:
+
+```http
+GET /api/calendar/6f1c2b9e-4d0a-4a53-9a51-2f7e0c1d8b44 HTTP/1.1
+Authorization: Canopy-Calendar t=1759870000, sig=<64 hex characters>
+Accept: application/json
+```
+
+`sig` is HMAC-SHA256, keyed with the calendar secret, of three lines
+joined by `\n`: `canopy-calendar-v1`, the person id, and `t` (Unix
+seconds, as sent). The site works out the same, compares in constant
+time, and refuses a `t` more than five minutes from its own clock.
+`verifyCalendarRequest(req)` does all of that and answers the person id
+from the path (`req.params.personId`, or the URL's last part), or `null`,
+including on a site with no `calendarSecret`. This service never follows
+a redirect from a site.
+
+Why this, rather than a key sent as it is (the way a site asks here):
+this service can't send the site's own key, since it only keeps that
+key's hash, so it needs a secret of its own for each site, and has to
+keep it readable to use it. With a signature, that secret never travels.
+A request that ends up in a log, a proxy, or at a mistyped Calendar URL
+gives away one person's calendar on that one site for five minutes, not
+everyone's for good. That costs about a dozen lines on each side. The
+secret is sealed in the database like a contact detail, so a copy of the
+database doesn't have it either.
+
+**What the site answers.** JSON, `200`:
+
+```json
+{
+  "entries": [
+    {
+      "uid": "q7Lm2xR9TcWb@events.canopysf.com",
+      "title": "Rooftop dinner",
+      "start": "2026-10-31T03:00:00.000Z",
+      "end": "2026-10-31T06:00:00.000Z",
+      "allDay": false,
+      "timeZone": "America/Los_Angeles",
+      "location": "Ana's place, 1 Market St, San Francisco",
+      "url": "https://events.canopysf.com/e/AbCdEfGhIjKl",
+      "status": "confirmed",
+      "description": "Bring a jacket.",
+      "updatedAt": "2026-10-01T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+- **`uid`** (required) is what calendar apps know the entry by, so it
+  stays the same for the life of the entry, whatever else changes:
+  `<the site's own id for it>@<the site's host>`, so no two sites can
+  clash. Up to 255 characters, no spaces. Never from anything that can
+  change (events uses the event's internal id, not its link, which a
+  host can replace).
+- **`title`** (required), up to 500 characters.
+- **`start`** (required) and **`end`**: ISO 8601 with `Z` or an offset.
+  `end` may be `null`, and the feed shows the entry as an hour long. With
+  **`allDay: true`** both are dates (`2026-10-31`), `end` the last day
+  (or `null` for one day). The feed writes every time in UTC, which
+  calendar apps show in their own zone.
+- **`timeZone`**: the entry's IANA zone, if the site knows it. Not used
+  yet (UTC says the moment); there for when the feed writes local times.
+- **`location`**, **`description`**: text, up to 1,000 and 4,000
+  characters. Only what the person may see on the site.
+- **`url`**: an http(s) link to the entry on the site.
+- **`status`** (required): `confirmed`, `tentative` or `cancelled`. A
+  cancelled entry is shown as such (struck through in Apple's Calendar,
+  and "Cancelled:" in its title everywhere, since Google ignores the
+  status), so keep cancelled entries in the answer for a while rather
+  than dropping them: a dropped one vanishes without saying why.
+- **`updatedAt`** (required): when anything about the entry last
+  changed, the person's own part in it included (going → maybe). It
+  becomes the event's `LAST-MODIFIED`, `DTSTAMP` and `SEQUENCE`, which
+  is how a calendar app knows to update it.
+
+An entry that doesn't fit this is left out (the log says how many), not
+the whole answer. At most 1,000 entries and 2 MB are read. A person the
+site has nothing for is `{"entries": []}`, never a 404: the answer
+shouldn't say whether someone exists. Leave out whatever the person
+couldn't see on the site, and **never anyone's contact details or other
+guests' names**: the feed ends up on Google's and Apple's servers.
+
+**When the site is down.** It has three seconds to answer. A failure
+(anything but a `200` with `entries`, or no answer in time) is logged
+with the site's name and nothing else, and the person's last good answer
+from that site is used instead, however old (see "Calendar feed").
+
+## Calendar feed
+
+Everyone gets **one calendar link**,
+`https://account.canopysf.com/cal/<secret>.ics` (or `webcal://` the
+same, which is what phones subscribe with), with everything they're
+hosting or going to on every Canopy site that has a calendar, kept up to
+date by their calendar app. Events is the first; tickets and whatever
+comes next join by answering one request (see "`GET
+<site>/api/calendar/<personId>`").
+
+**On the profile**, a **Calendar** section: **Add to Calendar** (the
+`webcal://` link, which Apple Calendar, Outlook and most others subscribe
+from), **Copy link** (for an app that takes a URL), **Google Calendar**
+(Google's own subscribe page with the link filled in; Android has no
+webcal handler of its own) and **Reset link**. The apps get the same from
+`GET /api/native/v1/me/calendar` and `POST .../me/calendar/reset` (see
+`docs/native-api.md`); the web's are `GET /api/profile/calendar` and
+`POST /api/profile/calendar/reset`. All of them answer `{"calendar":
+{url, webcalUrl, createdAt}}` with `Cache-Control: no-store`.
+
+**The link is the key.** Calendar apps can't sign in or send a header,
+so whoever has the URL can read the feed: what you're going to, where,
+and when. So:
+
+- The secret is 32 random bytes (43 characters), made the first time
+  someone opens their Calendar section, one per person. The database
+  keeps its SHA-256, which a fetch is looked up by, and a sealed copy
+  (see "Contact details at rest") so the profile can show the same link
+  again. A copy of the database alone gives neither. (Storing only the
+  hash would have made the link show-once, and "Copy link" a reset every
+  time.)
+- **Reset link** makes a new one, and the old one is a 404 at once. A
+  calendar subscribed to the old link stops updating (it keeps what it
+  had) until the new one is added. That's the way out of a link shared
+  by mistake.
+- It travels where URLs go: the calendar app's servers (Google and Apple
+  fetch it from theirs, not from the phone) and the logs of anything in
+  between. That's every calendar subscription's trade. This service
+  never logs it: a failed fetch's log line has no path.
+- An unknown link is a plain `404 Not found`, exactly like a wrong URL.
+- **A deleted account's link is gone** with it (`calendar_feeds` goes
+  with the person), and the profile's delete section says so.
+
+**What's in it** is up to each site (events: see its README). For each
+site with a Calendar URL that isn't cut off, this service asks `GET
+<calendar URL>/api/calendar/<personId>`, signed (see the site's side
+above), all of them at once, three seconds each. An unverified person's
+feed only asks the sites that let unverified accounts in, the same line
+as `/api/session`. The answers are merged into one calendar, soonest
+first; if two sites send the same `uid`, the first site's wins.
+
+**Kept five minutes, and the last good one when a site is down.** Each
+person's answer from each site is kept in memory and used as it is for
+five minutes, so a calendar app polling every minute asks each site at
+most every five. After that the site is asked again, and if it fails (an
+error, a timeout, nonsense) **the last good answer stands in**, however
+old: a calendar app takes a missing event as a deleted one, and a site's
+deploy shouldn't wipe everyone's calendars. Only a site that has never
+answered for that person since this service started is left out. When
+every site is in that state (a restart while the only site is down), the
+feed answers **`503`** with `Retry-After: 300` instead of an empty
+calendar, which the app would take as "delete everything"; on a 503 it
+keeps what it has. The answers are in memory rather than on disk on
+purpose: they say where people will be, with home addresses, and on disk
+they'd be in every snapshot and backup. The cost is a restart during a
+site's outage, which the 503 covers while there's one site.
+
+**The answer** is `Content-Type: text/calendar; charset=utf-8`, with an
+`ETag` (of the text, which only changes when an entry does, so an app
+that sends `If-None-Match` gets a `304`), `Cache-Control: private,
+max-age=300`, and inside it `REFRESH-INTERVAL:PT1H` and
+`X-PUBLISHED-TTL:PT1H`, asking apps to look every hour (Apple and Outlook
+listen; Google fetches every several hours whatever it's told). The text
+is written by hand in `lib/ics.js`: CRLF line endings, lines folded at 75
+octets, text escaped, times in UTC, `STATUS` for tentative and cancelled
+events (and "Cancelled:" in a cancelled one's title), and `SEQUENCE` and
+`LAST-MODIFIED` from each entry's `updatedAt`. The tests read every feed
+they fetch with a strict parser.
+
+**Limits.** Calendar apps poll, some every few minutes, from every device
+someone has, and Google's fetchers share addresses across many people.
+So the limits are light: **120 fetches an hour per feed** (a phone, a
+laptop and a tablet every five minutes is 36), **1,200 an hour per
+address**, and **60 unknown links an hour per address**, after which that
+address waits (guessing 32 random bytes is hopeless; this is about
+noise). A `429` has `Retry-After: 600`, and calendar apps keep what they
+have meanwhile.
 
 ## Finding people by phone or Instagram
 
@@ -965,12 +1295,13 @@ needs it to show a name). In `server.js` that shape is
 person or a site can get and fails if any of someone else's contact
 details turns up.
 
-How the lookup works (`GET /api/people/lookup`, above):
+How the lookup works (`POST /api/people/lookup`, above):
 
 - **Exact matches only.** What's typed is cleaned exactly the way the
   profile cleans it (`cleanPhone`: E.164, +1 when there's no country
   code; `cleanInstagram`: lowercase, no @, a pasted link trimmed to the
-  name) and compared with what's stored. Never a prefix, never anything
+  name) and its keyed hash compared with the stored one's (see "Contact
+  details at rest": the stored value itself is encrypted). Never a prefix, never anything
   fuzzy, so there's nothing to browse. Part of a number isn't a valid
   number, so it's refused as one.
 - **One answer or none.** If two accounts have typed in the same number
@@ -1047,6 +1378,270 @@ numbers to names. Every lookup counts, found or not:
   area code. Like the other ceilings, it trips for everyone: someone who
   uses it up stops lookups for that hour.
 
+### The lookup log
+
+The limits slow a scraper down; the log is for noticing one. Every
+lookup a site makes is written to `lookup_log`, found or not, and
+refused or not:
+
+- **who asked** (their person id; none when nobody signed in asked),
+- **which site** asked,
+- **what kind** (`phone` or `instagram`),
+- **what was looked for, as a keyed hash**: the same HMAC as the lookup
+  columns (see "Contact details at rest"), of the cleaned value. Never the
+  number or handle itself. None when it couldn't be cleaned (`bad_phone`)
+  or wasn't read (refused before that),
+- **whether it found someone**, and **whether it was refused, and why**
+  (the answer's `reason`: `lookup_not_allowed`, `signed_out`,
+  `email_unverified`, `one_of`, `rate_limited`, `bad_phone`,
+  `bad_instagram`),
+- **the visitor's address, as a keyed hash** (the same key). Telling
+  addresses apart is all the log needs, so it doesn't keep the address
+  itself; it's personal data, and it would sit in every backup,
+- and **when**.
+
+**Kept 90 days**, and pruned on the same daily run as the snapshots (just
+before each one, so a snapshot doesn't carry what's expired). Long enough
+to look back over a slow, patient run through numbers (the limits hold
+one asker to 100 a day, so a real attempt takes weeks or months), and to
+answer "how did they find me?" when someone asks weeks later. No longer,
+because the log is a record of who looked for whom, copied into every
+backup. A deleted account's entries stay under its id until they age out.
+Refusals that come before the limits are counted (not switched on, signed
+out, not verified, not one of the two, rate limited) are written down at
+most 30 an hour per asker (or per address, when nobody signed in asked)
+and 600 an hour in all, so the log can't be used to fill the disk; every
+other entry is already held back by the lookup limits.
+
+**When it looks wrong.** Someone working through numbers misses almost
+every time. A host inviting friends misses now and then (a friend who
+isn't on Canopy, a typo), but rarely ten times running. So an asker, or
+an address, is flagged for:
+
+- **10 misses in a row** (lookups that ran and found nobody);
+- in the last day, **at least 20 lookups with 80% or more missed**;
+- **running into the lookup limits** at all in the last day.
+
+There's no alerting channel yet, so a flag is a line in the server's log,
+once a day per asker or address:
+
+```
+[canopy-account] lookup alert: asker 6f1c2b9e-... (site events): 10 misses in a row. See the Account Manager's Lookups tab.
+```
+
+and the Account Manager's **Lookups** tab lists everyone who looked
+anyone up in the last week, flagged ones first, with how many lookups,
+how many found someone, the share that missed, how many were refused,
+which sites, and why they're flagged; then any address that's flagged,
+by the first characters of its hash. The thresholds are `LOOKUP_ALERT` in
+`server.js`. A flag blocks nothing: the limits do that. What to do about
+one is the admin's call (ask the person, turn the site's lookup off, or
+delete the account).
+
+**What an admin can learn from it, and what they can't.** From the
+Lookups tab: who has been looking people up, on which site, how often,
+how often they found someone, and whether one address is behind several
+askers. Not what anyone looked for: the tab never shows a target, and the
+database never holds one in plain text. A target hash can't be turned
+back into a number by itself, and a copy of the database (a snapshot)
+gives nothing more, because the hashes are keyed. **But it isn't
+irreversible to someone with the live server's keys.** Phone numbers are
+few enough to try them all, so whoever has `LOOKUP_HMAC_KEY` could hash
+every number in an area code and see which ones were looked up, and by
+whom; the same goes for addresses. That's the same line as everywhere
+else in "Contact details at rest": the log protects copies, not the live
+server. Without doing that, all anyone can tell is that two entries were
+for the same target (equal hashes), which is what shows someone asking
+for the same person over and over.
+
+## Contact details at rest
+
+Everyone's email, phone number, Instagram, Venmo and Cash App is
+**encrypted in `account.db`**, and so are the email and sign-up details a
+session holds for the few minutes a sign-in takes. Names, photos,
+passkeys and everything else aren't: names and photos are shown to
+everyone at the same event anyway, and the rest is already hashes or
+public keys.
+
+### What this protects, and what it doesn't
+
+**It protects copies of the database.** A copy of `account.db` gets made
+all the time: the daily snapshots, Coolify's volume backups (and the S3
+bucket they may go to), a file pulled down to look at something, a disk
+that's thrown away. Before this, every one of those was a list of
+everyone's email, phone number and Instagram, with their names. Now
+they're ciphertext, and a copy alone gives up none of them.
+
+**It doesn't protect against anyone on the live server.** The keys are in
+the service's environment, so whoever can read that (Coolify's
+environment variables, a shell in the container, the running process)
+can read everything, exactly as the service itself does. Nor does it
+change what the service gives out: the admin's pages, `/api/session` for
+a site that's granted a field, and someone's own profile all show the
+details decrypted, as before. It's a lock on the copies, not on the
+house.
+
+### Email is encrypted too
+
+Email was the hard call. It's looked up by exact value all over: signing
+in by code, whether an address already has an account (quick sign-up,
+changing your email, the admin's edit), and its uniqueness. So it's
+encrypted **and** has a keyed hash beside it (`email_hash`, with the
+unique index), which is what all of those use. Encrypting only the
+phone, Instagram, Venmo and Cash App would have been simpler, but a leaked
+copy would still have been a list of every name and email address here,
+which is the most useful part of it to a spammer or a phisher. The cost
+is that the email depends on the key like the rest, which the backup
+plan below covers. The keyed hash is also what lets an email come back
+if the key is lost.
+
+### How
+
+- **Sealed values** are `v1:<keyId>:<nonce>:<ciphertext and tag>` (the
+  last two base64url): AES-256-GCM with a fresh random 12-byte nonce for
+  every value, so the same phone number twice is two different strings.
+  What kind of value it is (`email`, `phone`, ...) is GCM's additional
+  data, so a value moved into another column won't open. `keyId` says
+  which key sealed it, which is what makes rotation possible.
+- **Lookup hashes**, `email_hash`, `phone_hash` and `instagram_hash`:
+  HMAC-SHA256 under a separate key, `LOOKUP_HMAC_KEY`, of exactly the
+  cleaned value the profile stores (`+14155551234`, `ana.lima`,
+  `ana@example.com`). The lookup cleans what's typed the same way and
+  hashes it, so it still matches exactly and only exactly, and "more than
+  one account claims this" is counted on the hashes without decrypting
+  anyone. A hash can't be checked against a guess without the key. With
+  the key, it can, and phone numbers are few enough to try them all: that
+  is the same line as above, the live server.
+- Everything is sealed and opened in `lib/db.js` and nowhere else; the
+  rest of the code only ever sees plain values. The same keys seal two
+  things that aren't contact details but have to be read back: each
+  person's calendar link and each site's calendar secret (see "Calendar
+  feed"). They're re-sealed on rotation like the rest. If a key is lost,
+  a person's link is replaced the next time they open their Calendar
+  section (the old one can't be shown, and stops working), and a site's
+  calendar is left out of feeds until the admin makes it a new calendar
+  secret.
+- **No plain text left in the file.** The database runs with SQLite's
+  `secure_delete`, so a value that's changed or deleted is overwritten,
+  not left in free space for a copy to carry, and the upgrade that first
+  sealed everything rebuilds the file (`VACUUM`) afterwards.
+
+### The keys
+
+Two environment variables, each base64 of 32 random bytes
+(`openssl rand -base64 32` makes one):
+
+- `CONTACT_ENCRYPTION_KEYS`: `<id>:<key>`, comma-separated. The **first
+  one encrypts**; any of them decrypts. The id is yours to choose
+  (letters, digits, `-`, `_`), e.g. the year: `k2026:9Gx...=`.
+- `LOOKUP_HMAC_KEY`: the key for the lookup hashes.
+
+**Setting them up on Coolify:**
+
+1. On your own computer, run `openssl rand -base64 32` twice.
+2. In Coolify, on this application, **Environment Variables**, add
+   `CONTACT_ENCRYPTION_KEYS` = `k2026:<the first one>` and
+   `LOOKUP_HMAC_KEY` = `<the second one>`. Tick nothing else (they're
+   runtime variables, not build ones).
+3. **Before deploying, copy both lines into your password manager** (see
+   the backup plan below).
+4. Redeploy. The log should have no `CONTACT_ENCRYPTION_KEYS` warning.
+   On the first deploy with this code, it also says the contact details
+   are now encrypted and that older snapshots aren't.
+
+Unset, the service makes **throwaway keys** for that run and prints them,
+the way it does `ADMIN_PASSWORD`. That's fine in development and on a
+brand-new install, where it warns loudly (`!!!`) in production. But
+details saved under throwaway keys can't be read after a restart, so
+**in production the service refuses to start without keys once there's
+anyone in the database**, saying why. Setting only one of the two, or a
+malformed one, always stops it.
+
+### Rotating a key
+
+1. Make a new key and put it **first**, keeping the old one after it:
+   `CONTACT_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`. Redeploy.
+2. At startup the service re-encrypts everything under an older key with
+   the new one, in one transaction, and logs `re-encrypted N contact
+   detail(s) under the current key, "k2027"`. (It does this at every
+   startup where anything isn't under the first key, so there's nothing
+   to run by hand.)
+3. **Keep the old key in the list as long as you keep any backup made
+   before the rotation**: the snapshots (14 days) and Coolify's backups
+   are still under it, and restoring one needs it. Once they've all aged
+   out, take it out and redeploy. If you take it out too soon, a
+   production start that finds anything under it is refused (see below).
+
+**Changing `LOOKUP_HMAC_KEY`** needs no steps: set the new one and
+redeploy. The service notices (a check value in `meta`), decrypts every
+email, phone and Instagram and works their hashes out again under the
+new key, and logs how many.
+
+### The key backup plan
+
+**Losing `CONTACT_ENCRYPTION_KEYS` loses every contact detail.** Nobody,
+including the admin, can get them back from the database: that's the
+point. So:
+
+- Keep both variables in your password manager, the moment they're made,
+  under something like "Canopy account service keys", and again whenever
+  one is rotated (with the old one, until it's retired).
+- Not on the Coolify server only: a lost server is when you'll need them.
+  Not in the repo. Not in the same place as the backups (a backup and its
+  key together are no better than plain text).
+- Restoring a backup on a new server means setting the same keys there
+  (or the list that includes the one the backup was made under).
+
+### If the keys are lost
+
+Startup in production refuses a database with values under a key it
+doesn't have: `N contact detail(s) in the database are encrypted under a
+key that isn't in CONTACT_ENCRYPTION_KEYS`. If the old key is somewhere,
+put it back after the current one. If it's truly gone, set
+`CONTACT_KEYS_LOST=1` (with new keys) and redeploy: the service starts,
+and every value it can't decrypt reads as empty. Nothing is deleted, so
+if the key turns up later, putting it back makes them readable again (and
+the next start re-encrypts them under the current key). Remove
+`CONTACT_KEYS_LOST` once the old values have been dealt with.
+
+Exactly what survives, with this design:
+
+**Only `CONTACT_ENCRYPTION_KEYS` lost** (`LOOKUP_HMAC_KEY` kept):
+
+- **Kept:** every account, name, photo, passkey and session, the admin,
+  the sites and their keys, every site's own records. **Sign-in by
+  passkey works** as before (a passkey names the account, not an email).
+- **Sign-in by email code still works**: the typed address is hashed and
+  finds the account by `email_hash`, the code goes to that address, and
+  proving it **puts the email back**, encrypted under the new key. So
+  each person's email comes back the first time they sign in by code.
+  Until then their profile and the admin show it as empty, and
+  confirming an unverified email from the profile asks them to sign in
+  by code instead.
+- **The lookup still finds people** by the phone number or Instagram
+  they had, because the hashes are intact, even though their profile
+  shows those as empty. Typing them in again (or clearing them) replaces
+  the hash as usual.
+- **Lost for good:** every phone number, Instagram, Venmo and Cash App,
+  as text. People have to type them in again.
+
+**Only `LOOKUP_HMAC_KEY` lost:** nothing is lost. Set a new one; the
+service rebuilds every hash from the decrypted values at startup.
+
+**Both lost:** as the first case, except the hashes are rebuilt under the
+new key from values that can't be decrypted, so they're cleared. Then
+emails can't be recovered by code: a person who signs in by code with
+their address gets a **new, empty account** for it (their old one is
+still reachable by passkey, with an empty email; the admin can set it).
+The lookup finds no one until people type their numbers in again. This is
+why both keys go in the password manager together.
+
+**Snapshots and backups from before the upgrade** that introduced this
+(schema version 9) still hold everything in plain text. They age out of
+`backups/sqlite` in 14 days; delete them sooner once the first new
+snapshot exists, and expire Coolify's older backups the same way. The
+service says so in its log the first time it starts on version 9.
+
 ## Running locally
 
 ```bash
@@ -1064,6 +1659,11 @@ the console instead of emailed:
 ```
 [canopy-account] code for ana@example.com: 123456
 ```
+
+With no `CONTACT_ENCRYPTION_KEYS` and `LOOKUP_HMAC_KEY`, throwaway keys
+are made and printed at each start (see "Contact details at rest"); copy
+them into your environment to keep a local database readable across
+restarts.
 
 Locally the cookie has no `Domain` and isn't `Secure`, and
 `http://localhost` passes the Origin and `?return=` checks. None of that
@@ -1105,6 +1705,12 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
    - `ANDROID_APK_KEY_HASHES`: empty until there's an Android app. Then
      its signing certificate's SHA-256 (see "Apps" and
      `docs/native-api.md`).
+   - `CONTACT_ENCRYPTION_KEYS` and `LOOKUP_HMAC_KEY`: required. Make each
+     with `openssl rand -base64 32`, set `CONTACT_ENCRYPTION_KEYS` to
+     `k2026:<one>` and `LOOKUP_HMAC_KEY` to `<the other>`, and **put both
+     in your password manager before deploying**. See "Contact details at
+     rest" for why, rotation, and what losing them costs.
+   - `CONTACT_KEYS_LOST`: leave unset. See "If the keys are lost".
    - Leave `PORT` and `DATA_DIR` alone. The Dockerfile sets them.
 6. Deploy.
 7. **Make the admin.** Open `https://account.canopysf.com`. A new install
@@ -1113,7 +1719,15 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
    account is the admin, and you land on the Account Manager.
 8. **Add each Canopy site** in the Account Manager's **Sites** tab (e.g.
    `tickets`), and give the key it shows, once, to that site as its
-   `CANOPY_ACCOUNT_KEY` (see "For Canopy sites").
+   `CANOPY_ACCOUNT_KEY` (see "For Canopy sites"). Tick only the contact
+   details that site shows people about themselves; events needs none
+   (see "What a site is told about the visitor").
+9. **Calendars.** For each site with a calendar (events), fill in its
+   **Calendar URL** in the Sites tab and Save, and give the calendar
+   secret it shows, once, to that site as `CANOPY_CALENDAR_SECRET` (see
+   "`GET <site>/api/calendar/<personId>`"). Check it from your own
+   profile: **Copy link** and open it in a browser; your events should be
+   in it.
 
 ### Confirming the volume is attached
 
@@ -1129,10 +1743,12 @@ empty, the path isn't `/app/data`, or it was added without a redeploy
 since). With 0 people the server also logs a line saying that. On a
 brand-new install, 0 is right.
 
-Two more lines worth seeing once: no warning about `SMTP_HOST` (in
-production that warning means sign-up and email recovery will fail), and
-no "ADMIN_PASSWORD not set" (that means a random one was made up for
-this run).
+Three more lines worth seeing once: no warning about `SMTP_HOST` (in
+production that warning means sign-up and email recovery will fail), no
+"ADMIN_PASSWORD not set" (that means a random one was made up for this
+run), and no "CONTACT_ENCRYPTION_KEYS and LOOKUP_HMAC_KEY are not set"
+(that means contact details saved in this run are lost at the next
+restart; with anyone in the database it doesn't start at all).
 
 ## Email: iCloud SMTP
 
@@ -1210,7 +1826,19 @@ unverified accounts not allowed. Version 6 added the lookup: everyone
 already here gets `FINDABLE_BY_DEFAULT`, and no site may look people up
 until the admin switches it on. Version 7 added what each session is
 (`client_kind`, `client_name`) and when it signed in: every signed-in
-session already here is a browser's, signed in when it started.
+session already here is a browser's, signed in when it started. Version 8
+added which contact details each site is told (`apps.contact_fields`):
+every site already here keeps all five, and a new one starts with none.
+Version 9 encrypted the contact details (see "Contact details at rest"):
+every row is sealed in the upgrade's one transaction, the plain-text
+indexes go, keyed-hash columns and their indexes come in, and the file
+is rebuilt with `VACUUM` so none of the plain text is left in it. It
+needs the keys set before it runs. Version 10 added the lookup log
+(`lookup_log`, see "The lookup log"), empty to start with. Version 11
+added the calendar feed: each site's `calendar_url`, `calendar_secret`
+(sealed) and `calendar_secret_at`, all empty (no site has a calendar until
+the admin says where it is), and `calendar_feeds`, empty (a link is made
+when someone first opens their Calendar section).
 
 **Backups.** Two layers, the same as tickets:
 
@@ -1231,10 +1859,14 @@ session already here is a browser's, signed in when it started.
 SQLite replays the newer write log on top of the older snapshot). Start
 the service and check the people count in the log. Photos and images
 aren't in the snapshot: they come from the volume, or from Coolify's
-archive of it.
+archive of it. The contact details in a snapshot are encrypted under
+whatever key was current when it was taken, so `CONTACT_ENCRYPTION_KEYS`
+has to include that key (see "Rotating a key").
 
 The snapshots hold everything the database does, but no secrets that
 work: session tokens, setup link codes, site keys and emailed codes are
-all hashes, and passkeys are public keys. A restored snapshot signs
+all hashes, and passkeys are public keys. And no contact details anyone
+can read without the keys: they're encrypted (see "Contact details at
+rest"). A restored snapshot signs
 people in as they were then. Anyone who signed in since needs to sign in
 again, and a site key made since won't work.

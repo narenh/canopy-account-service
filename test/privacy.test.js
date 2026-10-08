@@ -51,6 +51,9 @@ test("one person's contact details never reach another person or a site", async 
   const strangerApp = nativeApp(server);
   await strangerApp.begin();
   const asSite = (asker) => ({ headers: { Authorization: `Bearer ${site.key}`, ...(asker ? { 'X-Canopy-Session': asker.cookie } : {}) } });
+  const lookup = (body, token) => browser(server).post('/api/people/lookup', body, {
+    headers: { Authorization: `Bearer ${site.key}`, Origin: null, 'X-Canopy-Session': token }
+  });
 
   // Everything Bob, Quinn, a stranger or the site can ask that could
   // mention Ana.
@@ -59,9 +62,9 @@ test("one person's contact details never reach another person or a site", async 
     'bob /api/session': await browser(server).get('/api/session', asSite(bob)),
     'quinn /api/session': await browser(server).get('/api/session', asSite(quinn)),
     '/api/people': await browser(server).get(`/api/people?ids=${anaId}`, asSite()),
-    'lookup by phone': await browser(server).get('/api/people/lookup?phone=4155551234', asSite(bob)),
-    'lookup by instagram': await browser(server).get('/api/people/lookup?instagram=ana.secret', asSite(bob)),
-    'quinn lookup': await browser(server).get('/api/people/lookup?phone=4155551234', asSite(quinn)),
+    'lookup by phone': await lookup({ phone: '4155551234' }, bob.cookie),
+    'lookup by instagram': await lookup({ instagram: 'ana.secret' }, bob.cookie),
+    'quinn lookup': await lookup({ phone: '4155551234' }, quinn.cookie),
     'bob profile save': await bob.patch('/api/profile', { firstName: 'Bob', lastName: 'Bell' }),
     'bob passkeys': await bob.get('/api/profile/passkeys'),
     'stranger auth state': await browser(server).get('/api/auth/state'),
@@ -74,7 +77,7 @@ test("one person's contact details never reach another person or a site", async 
     'bob app passkeys': await bobApp.get('/me/passkeys'),
     'bob app sessions': await bobApp.get('/me/sessions'),
     'bob app /api/session': await browser(server).get('/api/session', { headers: { Authorization: `Bearer ${site.key}`, 'X-Canopy-Session': bobApp.token } }),
-    'bob app lookup': await browser(server).get('/api/people/lookup?phone=4155551234', { headers: { Authorization: `Bearer ${site.key}`, 'X-Canopy-Session': bobApp.token } }),
+    'bob app lookup': await lookup({ phone: '4155551234' }, bobApp.token),
     'bob app verify start': await bobApp.post('/me/verify/start'),
     'quinn app /me': await quinnApp.get('/me'),
     'quinn app sessions': await quinnApp.get('/me/sessions'),
@@ -82,8 +85,25 @@ test("one person's contact details never reach another person or a site", async 
     'stranger app code start': await strangerApp.post('/auth/email/start', { email: 'someone@example.com' }),
     'stranger app /me': await strangerApp.get('/me'),
     'stranger app begin': await nativeApp(server).post('/auth/begin', { platform: 'ios' }),
-    'openapi.yaml': { data: (await nativeApp(server).get('/openapi.yaml')).text }
+    'openapi.yaml': { data: (await nativeApp(server).get('/openapi.yaml')).text },
+    // The calendar feed's link, on the web and in the apps, and the feed.
+    'bob calendar': await bob.get('/api/profile/calendar'),
+    'bob calendar reset': await bob.post('/api/profile/calendar/reset'),
+    'bob app calendar': await bobApp.get('/me/calendar'),
+    'bob app calendar reset': await bobApp.post('/me/calendar/reset'),
+    'quinn app calendar': await quinnApp.get('/me/calendar'),
+    'stranger app calendar': await strangerApp.get('/me/calendar'),
+    'site list as bob': await bob.get('/api/admin/apps')
   };
+  {
+    const r = await browser(server).get(new URL(answers['bob app calendar reset'].data.calendar.url).pathname);
+    answers['bob feed'] = { data: r.text };
+    assert.equal(r.status, 200);
+  }
+  // Bob's link is his: not Ana's, and nothing of hers in it.
+  const anaCal = (await ana.get('/api/profile/calendar')).data.calendar.url;
+  assert.notEqual(answers['bob app calendar'].data.calendar.url, anaCal);
+  assert.equal(answers['stranger app calendar'].status, 401);
   assert.equal(answers['lookup by phone'].data.person.id, anaId, 'the lookup did find her');
   assert.equal(answers['bob /api/admin/people'].status, 401);
   assert.equal(answers['bob app lookup'].data.person.id, anaId, 'the lookup found her from the app too');

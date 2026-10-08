@@ -5,13 +5,28 @@ const crypto = require('crypto');
 const multer = require('multer');
 const webauthn = require('@simplewebauthn/server');
 
-const store = require('./lib/db').init();
+const db = require('./lib/db');
+
+// The database, with contact details encrypted under the keys in the
+// environment (lib/contactCrypto.js). A database those keys can't be right
+// for stops the server here, saying what to do, rather than serving people
+// with their details missing (lib/db.js, checkKeys).
+let store;
+try {
+  store = db.init();
+} catch (err) {
+  if (err.code !== 'CANOPY_STARTUP') throw err;
+  console.error(`[canopy-account] not starting: ${err.message}`);
+  process.exit(1);
+}
 const photoStore = require('./lib/photoStore');
 const { createImageStore } = require('./lib/uploadedImage');
 const session = require('./lib/session');
 const mailer = require('./lib/mailer');
 const { attemptLimiter, guessLimits, clientIp } = require('./lib/limits');
 const { BASE, isCanopyOrigin, safeReturn, passkeyRpId, isAppOrigin } = require('./lib/domain');
+const { createCalendar } = require('./lib/calendar');
+const { buildCalendar } = require('./lib/ics');
 
 const logoImageStore = createImageStore('logo');
 const backdropImageStore = createImageStore('backdrop');
@@ -112,10 +127,26 @@ function exemptAsApp(req) {
   return req.path === `${NATIVE}/auth/begin` && !!req.is('application/json');
 }
 
+// A Canopy site asking server to server, with its key: the same reasoning
+// as the apps. The key travels in an Authorization header, which no
+// browser attaches by itself and no page elsewhere can set without a CORS
+// preflight this service never answers, and the site routes never read
+// the cookie (the visitor's session comes in X-Canopy-Session, another
+// header a page can't set). GET /api/session and /api/people never met
+// this check, being GETs; the lookup is a POST so that what's looked up
+// rides in the body rather than the URL, and this keeps it working the
+// same way. Only the site routes that change nothing are listed, and the
+// key itself is checked by requireSite.
+const SITE_POSTS = ['/api/people/lookup'];
+
+function exemptAsSite(req) {
+  return SITE_POSTS.includes(req.path) && /^Bearer\s+cnp_\S+$/i.test(String(req.get('authorization') || '').trim());
+}
+
 app.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
   if (isCanopyOrigin(req.get('origin'))) return next();
-  if (exemptAsApp(req)) return next();
+  if (exemptAsApp(req) || exemptAsSite(req)) return next();
   res.status(403).json({ error: 'requests that change something must come from a Canopy page', reason: 'bad_origin' });
 });
 
@@ -366,6 +397,13 @@ function publicPersonView(req, p) {
   return { id: p.id, firstName: p.firstName, lastName: p.lastName, shortName: p.shortName, photoUrl: photoUrlFor(req, p) };
 }
 
+// personView, for a site: only the contact details it's been granted.
+function siteView(req, p) {
+  const view = personView(req, p);
+  db.CONTACT_FIELDS.forEach((f) => { if (!req.site.contactFields.includes(f)) delete view[f]; });
+  return view;
+}
+
 function meView(req) {
   return { person: req.person ? { ...personView(req, req.person), isAdmin: isAdmin(req) } : null };
 }
@@ -430,7 +468,9 @@ function errorAnswer(err) {
 function jsonErrors(err, req, res, next) {
   if (res.headersSent) return next(err);
   const [status, error, reason] = errorAnswer(err);
-  if (status >= 500) console.error(`[canopy-account] ${req.method} ${req.originalUrl} failed: ${(err && err.stack) || err}`);
+  // The path, never the query string: nothing that could hold someone's
+  // contact details goes in the log.
+  if (status >= 500) console.error(`[canopy-account] ${req.method} ${req.baseUrl}${req.path} failed: ${(err && err.stack) || err}`);
   res.status(status).json({ error, reason });
 }
 
@@ -484,7 +524,9 @@ async function registrationOptions(rpID, { userId, email, displayName, existing 
     rpName: PASSKEY_RP_NAME,
     rpID,
     userID: new TextEncoder().encode(userId),
-    userName: email,
+    // The email, which is what the phone shows the passkey under. An email
+    // that can't be read (its key was lost) falls back to the name.
+    userName: email || displayName,
     userDisplayName: displayName,
     attestationType: 'none',
     excludeCredentials: (existing || []).map((k) => ({ id: k.id, transports: k.transports })),
@@ -638,7 +680,7 @@ const registerExisting = handle(async (req, res) => {
   const person = store.getPersonByEmail(email);
   if (!person) return res.status(404).json({ error: 'not found', reason: 'not_found' });
   const options = await registrationOptions(rpID, {
-    userId: person.id, email: person.email, displayName: `${person.firstName} ${person.lastName}`,
+    userId: person.id, email, displayName: `${person.firstName} ${person.lastName}`,
     existing: store.passkeysOf(person.id)
   });
   store.setPending(req.sess.idHash, {
@@ -812,15 +854,19 @@ const registerVerify = handle(async (req, res) => {
     quickMadeLimits.hit(req);
     personId = made.person.id;
   } else if (mode === 'existing') {
-    const person = store.getPerson(personId);
-    // The proven email still has to be this person's.
-    if (!person || store.verifiedEmail(req.sess.idHash) !== person.email) return res.status(400).json(EXPIRED);
+    // The proven email still has to be this person's (by its keyed hash,
+    // which works even for an email whose key was lost: see below).
+    const proven = store.verifiedEmail(req.sess.idHash);
+    const owner = store.getPersonByEmail(proven);
+    if (!owner || owner.id !== personId) return res.status(400).json(EXPIRED);
     // The code proved the email, so the account is verified now -- and if
     // it wasn't before, it's this inbox's owner's alone, with what its maker
     // typed in cleared (lib/db.js). The answer says so (`tookOver`), and the
     // page goes on to the profile so the owner can check the name, which is
     // still the maker's.
-    const proved = store.addPasskeyProvingEmail(personId, cred, req.sess.idHash);
+    // The proven address is sealed again too, which brings back an email
+    // that read as empty because its key was lost.
+    const proved = store.addPasskeyProvingEmail(personId, cred, req.sess.idHash, proven);
     if (!proved.ok) return res.status(400).json(EXPIRED);
     if (proved.tookOver) {
       try { photoStore.remove(personId); } catch (e) {}
@@ -1076,13 +1122,39 @@ const emailChangeVerify = handle(async (req, res) => {
   store.signIn(req.sess.idHash, req.person.id);
   req.person = store.getPerson(req.person.id);
   try {
-    await mailer.sendEmailChanged(oldEmail, req.person.email, emailLogoUrl(req));
+    // No notice when the old address can't be read (its key was lost).
+    if (oldEmail) await mailer.sendEmailChanged(oldEmail, req.person.email, emailLogoUrl(req));
   } catch (err) {
     console.error(`[canopy-account] the email-changed notice to the old address failed: ${err.message}`);
   }
   res.json(meView(req));
 });
 app.post('/api/profile/email/verify', requireSignedIn, emailChangeVerify);
+
+// ---------------- Deleting your own account ----------------
+//
+// Exactly what the admin's delete does (their passkeys, every session
+// everywhere, any setup links, the photo), done by the person themself,
+// and then this browser is signed out. It takes a passkey check from the
+// last 15 minutes, the same as changing an email: a borrowed unlocked
+// phone or a stolen cookie isn't enough. (The page also has them type
+// DELETE, so it can't happen by a slip; the server doesn't need that.)
+// Every site keeps what it recorded under their id and shows them as a
+// former member. Not the admin: that would leave an install with nobody
+// to run it.
+const deleteMe = (req, res) => {
+  if (req.person.id === store.getAdminPersonId()) {
+    return res.status(409).json({ error: "the admin's account can't be deleted: it would leave nobody to run Canopy accounts", reason: 'is_admin' });
+  }
+  if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
+  const id = req.person.id;
+  if (!store.deletePerson(id)) return res.status(404).json({ error: 'not found', reason: 'not_found' });
+  try { photoStore.remove(id); } catch (e) {}
+  calendar.forget(id);
+  if (!req.native) res.append('Set-Cookie', session.clearHeader(req.hostname));
+  res.json({ ok: true });
+};
+app.delete('/api/profile', requireSignedIn, deleteMe);
 
 // ---------------- Proving your own email ----------------
 //
@@ -1094,6 +1166,9 @@ app.post('/api/profile/email/verify', requireSignedIn, emailChangeVerify);
 const verifyStart = handle(async (req, res) => {
   const email = req.person.email;
   if (req.person.emailVerifiedAt) return res.json({ ok: true, verified: true, email });
+  // Only if its key was lost (see "Contact details at rest"): signing in
+  // with a code to the address brings it back.
+  if (!email) return res.status(409).json({ error: 'sign in with a code to your email to confirm it', reason: 'email_unreadable' });
   if (codeSendLimits.blocked(req, email)) return tooMany(res);
   codeSendLimits.hit(req, email);
   const code = store.issueEmailCode(req.sess.idHash, email);
@@ -1270,6 +1345,45 @@ app.get('/photo/:personId', cookieOrBearer, (req, res) => {
   res.sendFile(file);
 });
 
+// ---------------- Your calendar feed ----------------
+//
+// One link per person that a calendar app subscribes to: everything they
+// host or are going to on every Canopy site with a calendar (the feed
+// itself is below, "The calendar feed"). The profile's Calendar section
+// asks for it, which makes it the first time; Reset link makes a new one
+// and the old one stops working at once (a link shared by mistake). The
+// link is the only key to the feed, since calendar apps can't sign in, so
+// it's 32 random bytes and the answers here are never cached.
+//
+// The tests shorten how long a site's answer is kept and how long a site
+// gets to answer (both in milliseconds), which nothing else should.
+const calendar = createCalendar({
+  sites: () => store.calendarSites(),
+  ...(process.env.NODE_ENV === 'test' && process.env.CALENDAR_FRESH_MS ? { freshMs: Number(process.env.CALENDAR_FRESH_MS) } : {}),
+  ...(process.env.NODE_ENV === 'test' && process.env.CALENDAR_TIMEOUT_MS ? { timeoutMs: Number(process.env.CALENDAR_TIMEOUT_MS) } : {})
+});
+
+function calendarView(req, feed) {
+  const url = `${publicBase(req)}/cal/${feed.secret}.ics`;
+  return { calendar: { url, webcalUrl: url.replace(/^https?:/, 'webcal:'), createdAt: feed.createdAt } };
+}
+
+const getCalendar = (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const feed = store.calendarFeed(req.person.id);
+  if (!feed) return res.status(404).json({ error: 'not found', reason: 'not_found' });
+  res.json(calendarView(req, feed));
+};
+app.get('/api/profile/calendar', requireSignedIn, getCalendar);
+
+const resetCalendar = (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const feed = store.resetCalendarFeed(req.person.id);
+  if (!feed) return res.status(404).json({ error: 'not found', reason: 'not_found' });
+  res.json(calendarView(req, feed));
+};
+app.post('/api/profile/calendar/reset', requireSignedIn, resetCalendar);
+
 // ---------------- Apps ----------------
 //
 // The iOS and Android apps sign in here and then use a token, sent as
@@ -1383,6 +1497,11 @@ native.post('/me/verify/check', nativeSignedIn, verifyCheck);
 // Where they're signed in.
 native.get('/me/sessions', nativeSignedIn, listSessions);
 native.delete('/me/sessions/:id', nativeSignedIn, endOneSession);
+// Deleting the account (a passkey check first, as for the email).
+native.delete('/me', nativeSignedIn, deleteMe);
+// The calendar feed's link, and a new one.
+native.get('/me/calendar', nativeSignedIn, getCalendar);
+native.post('/me/calendar/reset', nativeSignedIn, resetCalendar);
 
 // The contract, for app developers and their tools. test/docs.test.js
 // keeps it and the routes above in step.
@@ -1471,6 +1590,7 @@ app.delete('/api/admin/people/:id', (req, res) => {
   if (!notTheAdmin(req, res)) return;
   if (!store.deletePerson(req.params.id)) return res.status(404).json({ error: 'not found' });
   try { photoStore.remove(req.params.id); } catch (e) {}
+  calendar.forget(req.params.id);
   res.json({ ok: true });
 });
 
@@ -1493,15 +1613,90 @@ app.post('/api/admin/apps/:id/rekey', (req, res) => {
   res.json(result);
 });
 
-// A site's switches: { allowsUnverified, allowsLookup }.
+// Where a site's calendar is, for the calendar feed: an http(s) base URL
+// with nothing after the path (the feed adds /api/calendar/<personId>),
+// or '' for none. Over Coolify's internal network (http://events:3000) is
+// fine: the requests are signed, and the secret never travels.
+function cleanCalendarUrl(raw) {
+  if (raw === null || raw === '') return '';
+  if (typeof raw !== 'string' || raw.length > 500) return null;
+  let u;
+  try { u = new URL(raw.trim()); } catch (e) { return null; }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.username || u.password || u.search || u.hash) return null;
+  return u.href.replace(/\/+$/, '');
+}
+
+// A site's switches: { allowsUnverified, allowsLookup, contactFields,
+// calendarUrl }. contactFields is the whole list of the visitor's own
+// contact details /api/session tells it, from db.CONTACT_FIELDS. Giving a
+// site a calendar URL for the first time also makes its calendar secret,
+// which comes back once as `calendarSecret`.
 app.patch('/api/admin/apps/:id', (req, res) => {
   const body = req.body || {};
   const settings = {};
+  let calendarUrl;
+  if (body.calendarUrl !== undefined) {
+    calendarUrl = cleanCalendarUrl(body.calendarUrl);
+    if (calendarUrl === null) {
+      return res.status(400).json({ error: 'a calendar URL is http(s)://host[/path], with nothing after the path', reason: 'bad_calendar_url' });
+    }
+  }
   if (body.allowsUnverified !== undefined) settings.allowsUnverified = !!body.allowsUnverified;
   if (body.allowsLookup !== undefined) settings.allowsLookup = !!body.allowsLookup;
-  const site = store.setAppSettings(req.params.id, settings);
+  if (body.contactFields !== undefined) {
+    const fields = body.contactFields;
+    if (!Array.isArray(fields) || !fields.every((f) => db.CONTACT_FIELDS.includes(f))) {
+      return res.status(400).json({ error: `contactFields is a list of ${db.CONTACT_FIELDS.join(', ')}`, reason: 'bad_contact_fields' });
+    }
+    settings.contactFields = fields;
+  }
+  let site = store.setAppSettings(req.params.id, settings);
   if (!site) return res.status(404).json({ error: 'not found' });
-  res.json({ app: site });
+  const answer = {};
+  if (calendarUrl !== undefined) {
+    const made = store.setAppCalendarUrl(req.params.id, calendarUrl);
+    site = made.app;
+    if (made.secret) answer.calendarSecret = made.secret;
+  }
+  res.json({ app: site, ...answer });
+});
+
+// A new calendar secret for a site, shown once; the old one stops working
+// at once, so the site's calendar is left out of feeds until it has the
+// new one (and their last good copy stands in until then).
+app.post('/api/admin/apps/:id/calendar-secret', (req, res) => {
+  const result = store.rekeyAppCalendar(req.params.id);
+  if (!result) return res.status(404).json({ error: 'not found' });
+  res.json({ app: result.app, calendarSecret: result.secret });
+});
+
+// The admin's Lookups: the last week of the lookup log, by asker, and the
+// addresses that look wrong. Counts and reasons only: never a target, and
+// an address only as the first characters of its keyed hash.
+app.get('/api/admin/lookups', (req, res) => {
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const siteNames = new Map(store.listApps().map((a) => [a.id, a.name]));
+  const counts = (r) => ({
+    lookups: r.lookups || 0, found: r.found || 0, missed: r.missed || 0, refused: r.refused || 0,
+    rateLimited: r.rateLimited || 0, lastAt: r.lastAt
+  });
+  const askers = store.lookupAskers(since).map((r) => {
+    const p = store.getPerson(r.askerId);
+    return {
+      personId: r.askerId,
+      // null: a deleted account (a former member).
+      name: p ? `${p.firstName} ${p.lastName}` : null,
+      sites: String(r.sites || '').split(',').filter(Boolean).map((id) => siteNames.get(id) || id),
+      addresses: r.addresses,
+      ...counts(r),
+      concerns: lookupConcerns({ askerId: r.askerId })
+    };
+  });
+  const addresses = store.lookupAddresses(since)
+    .map((r) => ({ address: r.addressHash.slice(0, 12), askers: r.askers, ...counts(r), concerns: lookupConcerns({ addressHash: r.addressHash }) }))
+    .filter((a) => a.concerns.length);
+  const order = (a, b) => (b.concerns.length > 0) - (a.concerns.length > 0) || b.lookups + b.refused - (a.lookups + a.refused);
+  res.json({ since, askers: askers.sort(order), addresses: addresses.sort(order) });
 });
 
 app.post('/api/admin/apps/:id/revoke', (req, res) => {
@@ -1530,6 +1725,13 @@ function requireSite(req, res, next) {
 // the visitor as is. No X-Canopy-Site-Host, no renewCookie: an app's
 // token has no cookie to renew.
 //
+// The visitor's contact details (email, phone, Instagram, Venmo, Cash App)
+// are only the ones the admin granted this site (apps.contact_fields, none
+// for a new site). The rest are left out of `person` altogether, rather
+// than null: null means "they haven't filled it in", and a site that
+// isn't told shouldn't be able to read it as that. What a site is never
+// sent can't leak from it, its logs or its caches.
+//
 // Someone whose email isn't proven is only signed in on a site the admin
 // lets unverified accounts into. Anywhere else the answer is { person:
 // null, unverified: true }, so the site can send them to prove it rather
@@ -1543,7 +1745,7 @@ app.get('/api/session', requireSite, (req, res) => {
   if (!person) return res.json({ person: null });
   store.touchSession(s.idHash, s.lastSeenAt);
   const body = person.emailVerifiedAt || req.site.allowsUnverified
-    ? { person: personView(req, person) }
+    ? { person: siteView(req, person) }
     : { person: null, unverified: true };
   const siteHost = req.get('x-canopy-site-host');
   if (siteHost && session.needsRenewal(s)) {
@@ -1565,11 +1767,14 @@ app.get('/api/people', requireSite, (req, res) => {
 
 // ---------------- Finding someone by phone or Instagram ----------------
 //
-// GET /api/people/lookup?phone=… or ?instagram=… (one of them): the one
-// person whose profile has exactly that, in the public shape, or { person:
-// null }. For a host who already has someone's number or handle and wants
-// to invite them. It's one-way: knowing the number finds the account, and
-// the answer never carries a contact detail, not even the one asked about.
+// POST /api/people/lookup with { "phone": "…" } or { "instagram": "…" }
+// (one of them): the one person whose profile has exactly that, in the
+// public shape, or { person: null }. For a host who already has someone's
+// number or handle and wants to invite them. It's one-way: knowing the
+// number finds the account, and the answer never carries a contact detail,
+// not even the one asked about. A POST, so the number or handle is in the
+// body: URLs end up in logs (this service's, the site's, a proxy's), and a
+// body doesn't. There's no GET: nothing outside Canopy used it.
 //
 //   - The input is cleaned exactly as the profile cleans it (cleanPhone,
 //     cleanInstagram), and matched exactly. Never by prefix or anything
@@ -1578,9 +1783,10 @@ app.get('/api/people', requireSite, (req, res) => {
 //     signed in there (X-Canopy-Session, as for /api/session) whose email
 //     is proven: limits are per asker, so an asker has to be someone, and
 //     an unverified account is too cheap to make.
-//   - Nobody who turned "Let people ... find you" off, nobody when two
-//     accounts claim the same one, and never an account whose email isn't
-//     proven, though its claim still counts as one of the two (lib/db.js,
+//   - Nobody who turned "Let people ... find you" off, and nobody when two
+//     accounts claim the same one. A phone number only finds an account
+//     whose email is proven; an Instagram handle finds unverified ones too.
+//     Every account's claim counts as one of the two either way (lib/db.js,
 //     and "Finding people" in the README for why).
 //   - A miss is { person: null } and says nothing about why.
 //
@@ -1606,28 +1812,179 @@ const lookupLimits = {
   }
 };
 
-app.get('/api/people/lookup', requireSite, (req, res) => {
+// ---- The lookup log ----
+//
+// Every lookup a site makes is written down (lib/db.js, lookup_log): who
+// asked, from which site and address, whether it was refused (and why),
+// and whether it found anyone. What was looked for is kept only as the
+// keyed hash the lookup itself uses, and the address as a keyed hash too,
+// so the log holds no number, handle or IP. It's for noticing someone
+// working through numbers, which looks like a lot of misses:
+//
+//   - 10 misses in a row, from one asker or one address; or
+//   - in the last day, at least 20 lookups of which 80% or more missed; or
+//   - running into the limits at all.
+//
+// A host inviting friends by number misses now and then (a friend who
+// isn't on Canopy, a number typed wrong); ten in a row, or a day of almost
+// nothing but misses, is someone guessing. There's no alerting channel
+// yet, so it's a warning line in the log (once a day per asker or address)
+// and the admin's Lookups tab. Neither ever shows a target.
+//
+// Refusals that come before the limits count (signed out, not switched
+// on, not verified, not one of phone or instagram, rate limited) are
+// written down at most 30 an hour per asker or address and 600 an hour in
+// all, so the log can't be used to fill the disk.
+const LOOKUP_ALERT = { streak: 10, dayAtLeast: 20, dayMissRate: 0.8 };
+// Per asker, or per visitor address when nobody signed in asked (not
+// clientIp: that's the site's own server here).
+const lookupRefusalLog = { who: attemptLimiter(30, HOUR), all: attemptLimiter(600, HOUR) };
+const lookupAlerted = new Map();
+
+// What's suspicious about one asker ({ askerId }) or address ({ addressHash })
+// right now: a list of reasons, empty when nothing is.
+function lookupConcerns(who) {
+  const day = store.lookupStats(who, Date.now() - 24 * HOUR);
+  const streak = store.missStreak(who);
+  const reasons = [];
+  if (streak >= LOOKUP_ALERT.streak) reasons.push(`${streak} misses in a row`);
+  if (day.lookups >= LOOKUP_ALERT.dayAtLeast && day.missed / day.lookups >= LOOKUP_ALERT.dayMissRate) {
+    reasons.push(`${Math.round((100 * day.missed) / day.lookups)}% of ${day.lookups} lookups missed in a day`);
+  }
+  if (day.rateLimited) reasons.push(`hit the lookup limits ${day.rateLimited} time(s) in a day`);
+  return reasons;
+}
+
+// Says so in the log, once a day per asker and per address.
+function warnAboutLookups(entry) {
+  const today = new Date().toISOString().slice(0, 10);
+  const check = (key, who, label) => {
+    if (lookupAlerted.get(key) === today) return;
+    const reasons = lookupConcerns(who);
+    if (!reasons.length) return;
+    lookupAlerted.set(key, today);
+    if (lookupAlerted.size > 10000) lookupAlerted.clear();
+    console.warn(`[canopy-account] lookup alert: ${label} (site ${entry.siteName}): ${reasons.join('; ')}. See the Account Manager's Lookups tab.`);
+  };
+  if (entry.askerId) check(`asker:${entry.askerId}`, { askerId: entry.askerId }, `asker ${entry.askerId}`);
+  if (entry.addressHash) check(`address:${entry.addressHash}`, { addressHash: entry.addressHash }, `address #${entry.addressHash.slice(0, 12)}`);
+}
+
+// Writes one lookup down, and looks for a pattern.
+function logLookup(entry, { matched = false, refused = null } = {}) {
+  if (refused && refused !== 'bad_phone' && refused !== 'bad_instagram') {
+    const who = entry.askerId || `address:${entry.addressHash}`;
+    if (lookupRefusalLog.who.blocked(who) || lookupRefusalLog.all.blocked('all')) return;
+    lookupRefusalLog.who.hit(who);
+    lookupRefusalLog.all.hit('all');
+  }
+  store.logLookup({ ...entry, matched, refused });
+  warnAboutLookups(entry);
+}
+
+app.post('/api/people/lookup', requireSite, (req, res) => {
   res.set('Cache-Control', 'no-store');
-  if (!req.site.allowsLookup) return res.status(403).json({ error: 'this site may not look people up', reason: 'lookup_not_allowed' });
   const token = session.readToken(`${session.COOKIE}=${req.get('x-canopy-session') || ''}`);
   const s = token && store.getSessionByToken(token);
   const asker = s && s.personId ? store.getPerson(s.personId) : null;
-  if (!asker) return res.status(401).json({ error: 'not signed in', reason: 'signed_out' });
-  if (!asker.emailVerifiedAt) return res.status(403).json({ error: 'confirm your email first', reason: 'email_unverified' });
-
-  const { phone, instagram } = req.query;
-  if ((phone === undefined) === (instagram === undefined) || Array.isArray(phone) || Array.isArray(instagram)) {
-    return res.status(400).json({ error: 'give one of phone or instagram', reason: 'one_of' });
-  }
   const address = String(req.get('x-canopy-visitor-ip') || clientIp(req)).slice(0, 64);
-  if (lookupLimits.blocked(asker.id, address)) return tooMany(res);
+  const entry = { siteId: req.site.id, siteName: req.site.name, askerId: asker ? asker.id : null, addressHash: store.lookupHash('address', address) };
+  const refuse = (status, body) => {
+    logLookup(entry, { refused: body.reason });
+    return res.status(status).json(body);
+  };
+  if (!req.site.allowsLookup) return refuse(403, { error: 'this site may not look people up', reason: 'lookup_not_allowed' });
+  if (!asker) return refuse(401, { error: 'not signed in', reason: 'signed_out' });
+  if (!asker.emailVerifiedAt) return refuse(403, { error: 'confirm your email first', reason: 'email_unverified' });
+
+  // Strings only: exactly one of the two, as someone typed it.
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const { phone, instagram } = body;
+  if ((phone === undefined) === (instagram === undefined) || (phone !== undefined && typeof phone !== 'string')
+    || (instagram !== undefined && typeof instagram !== 'string')) {
+    return refuse(400, { error: 'give one of phone or instagram', reason: 'one_of' });
+  }
+  entry.kind = phone !== undefined ? 'phone' : 'instagram';
+  if (lookupLimits.blocked(asker.id, address)) return refuse(429, { error: 'too many tries -- wait a few minutes', reason: 'rate_limited' });
   lookupLimits.hit(asker.id, address);
 
   const wanted = phone !== undefined ? { phone: cleanPhone(phone) } : { instagram: cleanInstagram(instagram) };
-  if (wanted.phone === false || wanted.phone === null) return res.status(400).json(BAD_PHONE);
-  if (wanted.instagram === false || wanted.instagram === null) return res.status(400).json(BAD_INSTAGRAM);
+  if (wanted.phone === false || wanted.phone === null) return refuse(400, BAD_PHONE);
+  if (wanted.instagram === false || wanted.instagram === null) return refuse(400, BAD_INSTAGRAM);
+  entry.targetHash = store.lookupHash(entry.kind, wanted[entry.kind]);
   const found = store.findPerson(wanted);
+  logLookup(entry, { matched: !!found });
   res.json({ person: found ? publicPersonView(req, found) : null });
+});
+
+// ---------------- The calendar feed ----------------
+//
+// GET /cal/<secret>.ics (or webcal://, which is the same request): the
+// person's Canopy calendar, merged from every site with a calendar
+// (lib/calendar.js asks them, lib/ics.js writes it). Calendar apps can't
+// sign in or send a header, so the secret in the URL is the whole key, and
+// it travels where URLs do (the calendar app's servers, proxies' logs).
+// That's every calendar subscription's trade; Reset link is the way out.
+// Nothing here logs the path.
+//
+// - An unknown secret is a bare 404, the same as any other wrong URL.
+// - A deleted person's feed is gone with them (calendar_feeds cascades).
+// - Calendar apps poll, some every few minutes and from several devices,
+//   and Google's fetchers share addresses across many people. So the
+//   limits are light: 120 fetches an hour per feed and 1,200 per address,
+//   and 60 unknown secrets an hour per address (guessing 32 random bytes
+//   is hopeless; that one is only about noise). A 429 says when to come
+//   back, and calendar apps keep what they had meanwhile.
+// - The answer has an ETag (of the text, which doesn't change unless an
+//   entry does), so an app that sends If-None-Match gets a 304, and
+//   `Cache-Control: private, max-age=300`, the time each site's answer is
+//   kept here anyway.
+// - When there are sites to ask and none has ever answered for this person
+//   (a restart while the only site is down), a 503 rather than an empty
+//   calendar, which would make the app delete everything it has.
+const CAL_FILE_RE = /^([A-Za-z0-9_-]{43})\.ics$/;
+const feedLimits = {
+  feed: attemptLimiter(120, HOUR),
+  address: attemptLimiter(1200, HOUR),
+  unknown: attemptLimiter(60, HOUR)
+};
+
+function feedRefusal(res, status, text, retryAfter) {
+  res.set('Cache-Control', 'no-store');
+  if (retryAfter) res.set('Retry-After', String(retryAfter));
+  res.status(status).type('text/plain').send(text);
+}
+
+app.get('/cal/:file', async (req, res) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  try {
+    const ip = clientIp(req);
+    if (feedLimits.address.blocked(ip) || feedLimits.unknown.blocked(ip)) return feedRefusal(res, 429, 'Too many requests\n', 600);
+    feedLimits.address.hit(ip);
+    const m = CAL_FILE_RE.exec(req.params.file);
+    const person = m ? store.personByCalendarSecret(m[1]) : null;
+    if (!person) {
+      feedLimits.unknown.hit(ip);
+      return feedRefusal(res, 404, 'Not found\n');
+    }
+    if (feedLimits.feed.blocked(person.id)) return feedRefusal(res, 429, 'Too many requests\n', 600);
+    feedLimits.feed.hit(person.id);
+    const result = await calendar.entriesFor(person);
+    if (result.unavailable) return feedRefusal(res, 503, 'Try again in a few minutes\n', 300);
+    const body = buildCalendar(result.entries);
+    const etag = `"${crypto.createHash('sha256').update(body).digest('base64url').slice(0, 32)}"`;
+    res.set('ETag', etag);
+    res.set('Cache-Control', 'private, max-age=300');
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Content-Disposition', 'inline; filename="canopy.ics"');
+    const sent = String(req.get('if-none-match') || '').split(',').map((t) => t.trim().replace(/^W\//, ''));
+    if (sent.includes(etag) || sent.includes('*')) return res.status(304).end();
+    res.send(body);
+  } catch (err) {
+    // Not the path: it's the secret.
+    console.error(`[canopy-account] calendar feed failed: ${(err && err.stack) || err}`);
+    if (!res.headersSent) feedRefusal(res, 500, 'Something went wrong\n');
+  }
 });
 
 // ---------------- Pages ----------------

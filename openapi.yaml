@@ -38,6 +38,7 @@ tags:
   - name: Passkeys
   - name: Email
   - name: Sessions
+  - name: Calendar
 paths:
   /auth/begin:
     post:
@@ -384,6 +385,40 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/SignedOut' }
+    delete:
+      tags: [Profile]
+      summary: Delete the account
+      description: |
+        Deletes the signed-in person's account, as the admin's delete does:
+        their passkeys, every session (this token included, and every
+        browser and other app), any setup links, and their photo. Needs a
+        passkey check from the last 15 minutes first (`me/reauth/*`), the
+        same as changing the email; ask them to confirm in the app too
+        (the web has them type DELETE). Afterwards forget the token. Canopy
+        sites keep what they recorded under the id and show them as a
+        former member. The admin's account can't be deleted this way.
+      operationId: deleteMe
+      responses:
+        '200':
+          description: Deleted. The token no longer works.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, const: true }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '403':
+          description: '`reauth_required`: confirm with a passkey first (`me/reauth/*`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`is_admin`: the admin''s account, which would leave nobody to run Canopy accounts.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /me/photo:
     post:
@@ -662,6 +697,35 @@ paths:
         '401': { $ref: '#/components/responses/SignedOut' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /me/calendar:
+    get:
+      tags: [Calendar]
+      summary: Their calendar feed's link
+      description: |
+        The one link a calendar app subscribes to for everything they host
+        or are going to on every Canopy site with a calendar. Made the
+        first time it's asked for, then the same link every time (until a
+        reset). Offer `webcalUrl` to subscribe (iOS opens it in Calendar)
+        and `url` to copy. Anyone with the link can read the feed, so show
+        it to its owner only and never log it.
+      operationId: getCalendar
+      responses:
+        '200': { $ref: '#/components/responses/Calendar' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/calendar/reset:
+    post:
+      tags: [Calendar]
+      summary: A new calendar link
+      description: |
+        A new link; the old one stops working at once (a 404), so any
+        calendar subscribed to it stops updating until the new one is
+        added. For a link shared by mistake.
+      operationId: resetCalendar
+      responses:
+        '200': { $ref: '#/components/responses/Calendar' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
   /openapi.yaml:
     get:
       summary: This file
@@ -751,6 +815,18 @@ components:
         signedInAt: { type: integer }
         lastSeenAt: { type: integer }
         current: { type: boolean, description: This app. }
+    CalendarLink:
+      type: object
+      required: [url, webcalUrl, createdAt]
+      properties:
+        url:
+          type: string
+          description: 'https://account.canopysf.com/cal/<secret>.ics, for "Copy link" and calendar apps that take a URL.'
+          examples: ['https://account.canopysf.com/cal/q3Xb0Jk2lmZx8sQpN4vRw1tYc6EeHh9oLaDfUuKiGg0.ics']
+        webcalUrl:
+          type: string
+          description: The same link as webcal://, which a phone hands to its calendar app to subscribe.
+        createdAt: { type: integer, description: When this link was made (or last reset). }
     CreationOptions:
       type: object
       description: |
@@ -863,6 +939,15 @@ components:
               response: { $ref: '#/components/schemas/AuthenticationResponse' }
 
   responses:
+    Calendar:
+      description: The link.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [calendar]
+            properties:
+              calendar: { $ref: '#/components/schemas/CalendarLink' }
     Ok:
       description: Done.
       content:
