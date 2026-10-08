@@ -62,6 +62,7 @@ async function finishRegistration(options, errorEl){
 // "Sign in with passkey". True once signed in.
 async function signInWithPasskey(errorEl){
   const start = await postJson('/api/auth/login/options');
+  if (start.res.status === 429){ errorEl.textContent = t('welcome.tooMany'); return false; }
   if (!start.res.ok){ errorEl.textContent = t('welcome.failed') + detail(start.data.error || start.res.status); return false; }
   let response;
   try{

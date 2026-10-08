@@ -47,6 +47,8 @@ paths:
         Makes a fresh sign-in, not yet anyone's, and answers its `ceremony`
         value. Send that as the bearer token at every `auth/*` step after.
         It runs out a day after its last use. The body has to be JSON.
+        Counted: 100 per network address and 1,000 across everyone an hour,
+        shared with browsers starting a sign-in.
       security: []
       operationId: begin
       requestBody:
@@ -82,6 +84,7 @@ paths:
                   ceremony: { $ref: '#/components/schemas/Token' }
         '400': { $ref: '#/components/responses/BadPlatform' }
         '403': { $ref: '#/components/responses/BadOrigin' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   /auth/passkey/options:
     post:

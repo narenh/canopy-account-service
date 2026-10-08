@@ -187,7 +187,9 @@ Every `/auth/*` step after this sends `Authorization: Bearer <ceremony>`.
 A missing, unknown or run-out ceremony is `400 expired`: begin again. A
 ceremony nobody finishes runs out a day after it was last used. Begin
 again for each new attempt; the same ceremony can be reused while it
-lasts (to resend a code, say).
+lasts (to resend a code, say). Each one is counted (see "Limits"), so
+don't begin one until the person starts signing in; `429 rate_limited`
+means wait.
 
 ## Signing in with a passkey
 
@@ -612,6 +614,7 @@ The app and the web count in the same counters, so these are shared:
 | Wrong codes | 10 per email per 15 min | 40 per 15 min | 300 per hour |
 | Quick sign-up tries | 10 per ceremony per 15 min | 20 per hour | 200 per hour |
 | Quick accounts made | | 10 per hour | 50 per hour |
+| `auth/begin` (and browsers starting a sign-in with no cookie) | | 100 per hour | 1,000 per hour |
 
 On top of that, each code dies after 5 wrong tries. "Address" is the
 phone's network address, so a party on one wifi shares it.

@@ -164,6 +164,9 @@ function attachSession(create) {
         store.cookieRenewed(s.idHash);
       }
     } else if (create) {
+      // A new row, kept for a day even if nothing comes of it: counted.
+      if (newSessionLimits.blocked(req)) return tooMany(res);
+      newSessionLimits.hit(req);
       const made = store.createSession();
       s = made.session;
       res.append('Set-Cookie', session.cookieHeader(made.token, req.hostname));
@@ -392,6 +395,10 @@ app.get('/api/me', attachSession(false), me);
 // - Changing your email: 5 new addresses per person an hour, on top of the
 //   code-sending limits (each try sends an email). Someone changing their
 //   email does it once, or twice after a typo.
+// - New sessions that aren't signed in (a browser with no cookie starting
+//   a sign-in, an app's auth/begin): each is a row kept for a day, so 100
+//   per address and 1,000 across everyone an hour. A browser makes one and
+//   keeps its cookie; see the README for the numbers.
 const codeSendLimits = guessLimits({ perWho: [5, 60 * 60 * 1000], perIp: [20, 60 * 60 * 1000], overall: [100, 60 * 60 * 1000] });
 const codeGuessLimits = guessLimits({ perWho: [10, 15 * 60 * 1000], perIp: [40, 15 * 60 * 1000], overall: [300, 60 * 60 * 1000] });
 const setupPasswordLimits = guessLimits({ perWho: [8, 15 * 60 * 1000], perIp: [40, 15 * 60 * 1000], overall: [100, 60 * 60 * 1000] });
@@ -399,6 +406,7 @@ const setupLinkIpLimiter = attemptLimiter(40, 15 * 60 * 1000);
 const quickTryLimits = guessLimits({ perWho: [10, 15 * 60 * 1000], perIp: [20, 60 * 60 * 1000], overall: [200, 60 * 60 * 1000] });
 const quickMadeLimits = guessLimits({ perIp: [10, 60 * 60 * 1000], overall: [50, 60 * 60 * 1000] });
 const emailChangeLimiter = attemptLimiter(5, 60 * 60 * 1000);
+const newSessionLimits = guessLimits({ perIp: [100, 60 * 60 * 1000], overall: [1000, 60 * 60 * 1000] });
 
 // An error that got as far as Express, as the JSON every API answer is:
 // {error, reason}. An upload's own (too big, or malformed: uploadOne), a
@@ -1329,6 +1337,8 @@ native.post('/auth/begin', (req, res) => {
   const appName = cleanLabel(body.app);
   const device = cleanLabel(body.device);
   const name = appName && device ? `${appName} on ${device}` : appName || device || null;
+  if (newSessionLimits.blocked(req)) return tooMany(res);
+  newSessionLimits.hit(req);
   const { token } = store.createSession({ kind: body.platform, name });
   res.status(201).json({ ceremony: token });
 });

@@ -387,7 +387,8 @@ are:
 
 On the server, a signed-in session lasts a year from when it was last
 seen. One that never signed in (a sign-in started and abandoned) lasts
-a day.
+a day, and how many of those can be made is limited (see "Guess
+limits").
 
 **Where you're signed in.** Each session remembers what it is: a browser
 (named from its `User-Agent` when it signs in, like "Safari on iPhone")
@@ -447,7 +448,8 @@ contract.
   a sign-up) signs that row in under a **new** token, as a browser's is,
   and answers it as `token`; the ceremony value is worthless from then
   on. A ceremony nobody finishes runs out in a day, like a browser's
-  abandoned sign-in.
+  abandoned sign-in, and making them counts against the same limit as
+  browsers starting one (see "Guess limits").
 - **The token is a session like any other.** It's one row in `sessions`,
   stored as its hash, good for a year from when it was last used. Any use
   keeps it alive: the app's own calls here, or a site's `/api/session`
@@ -627,6 +629,7 @@ trusted for this.
 | Quick sign-up tries | 10 per browser per 15 min | 20 per hour | 200 per hour |
 | Quick accounts made | | 10 per hour | 50 per hour |
 | Changing your email (new addresses) | 5 per person per hour | (the code limits) | (the code limits) |
+| New sessions not yet signed in | | 100 per hour | 1,000 per hour |
 | Lookups by phone or Instagram | 30 per asker per hour, 100 per day | 60 per hour | 300 per hour |
 
 On top of that, each code dies after 5 wrong tries. The apps count in
@@ -660,6 +663,27 @@ does it once, or twice after a typo. The answer is the same whether the
 address has an account or not (see "With an email and a code"), so the
 limit isn't what keeps that secret. It's there so a signed-in account
 can't be used to send many emails.
+
+**Why those numbers for new sessions.** A browser with no cookie that
+starts a sign-in (the passkey button, an email, a quick sign-up, the
+setup password or a setup link, here or from another Canopy page) gets
+a new row in `sessions`, and so does every app's `auth/begin`. One
+that's never signed in is kept for a day. Nothing else held these back,
+so a loop of requests could fill the disk with rows. Now they're
+counted: 100 per address and 1,000 across everyone an hour. A browser
+makes one and keeps its cookie, so reloading the page and pressing the
+passkey button again costs nothing; only a browser that throws its
+cookie away each time (or refuses it) is counted again. 100 an hour is
+far more first visits than a household or a party on one wifi will
+make. A phone carrier that puts a great many phones behind one address
+could in principle reach it, and those phones would wait out the hour;
+that's the price of a per-address count anywhere here. 1,000 an hour
+across everyone is far above Canopy's sign-ups on any day. That caps
+abuse at 24,000 rows a day, on the order of 10 MB, and they're pruned
+after a day. When the ceiling trips, browsers without a cookie
+and apps can't start a sign-in for that hour; anyone signed in, or
+already part way through signing in, isn't affected. Page loads never
+make one: only these POSTs do.
 
 **Why those numbers for lookups.** See "Finding people by phone or
 Instagram".
