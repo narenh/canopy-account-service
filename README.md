@@ -429,6 +429,67 @@ contract.
   links. Those stay on the web. An app can't sign anyone in until there's
   an admin (`403 setup_required`).
 
+## The association files
+
+A phone only lets an app use a website's passkeys when the website says
+the app is its own. Passkeys here belong to `canopysf.com`, so that's
+where the two files go, not `account.canopysf.com`. `canopysf.com` is the
+static site deployed from its own repo, so this repo only keeps
+ready-to-copy versions in `docs/well-known/`:
+
+- **`apple-app-site-association`** names the iOS app as one that may
+  use the domain's passkeys (`webcredentials`), by its team and bundle
+  id: `UC3Y84QJ83.com.canopysf.CanopyEvents`. The app has the matching
+  entitlement, `webcredentials:canopysf.com`.
+- **`assetlinks.json`** does the same for Android
+  (`delegate_permission/common.get_login_creds`). The package name
+  (`com.canopysf.events`) and the all-zero fingerprint in it are
+  **placeholders** until the Android app exists: put in its real package
+  name and the SHA-256 fingerprint of the certificate it's signed with
+  (with Play App Signing, the app signing key's from the Play Console,
+  not the upload key's), and put the same fingerprint in
+  `ANDROID_APK_KEY_HASHES` here. A debug build signs with a different
+  certificate, so it needs its own entry in both, or it can't sign in.
+
+Where they go, and what both platforms insist on:
+
+- At exactly `https://canopysf.com/.well-known/apple-app-site-association`
+  (no `.json` on that one) and
+  `https://canopysf.com/.well-known/assetlinks.json`.
+- Served as **`Content-Type: application/json`**, with a 200. Google
+  says so outright and fails anything else; Apple's own pages have said
+  it at times, and it costs nothing. A static host sends a file with no
+  extension as `application/octet-stream`, so it has to be told. On
+  Cloudflare Pages that's a `_headers` file at the top of the site:
+
+  ```
+  /.well-known/apple-app-site-association
+    Content-Type: application/json
+  /.well-known/assetlinks.json
+    Content-Type: application/json
+  ```
+
+- **No redirects.** Both are fetched from `https://canopysf.com/...`
+  and neither platform follows a 301 or 302. So the bare domain can't
+  redirect to `www`, or anywhere else, for these paths. Over https, with
+  a real certificate.
+- Nothing in the way: no Cloudflare challenge page, no login, and if
+  there's a `robots.txt`, it allows `/.well-known/`.
+
+**Apple's CDN.** Phones don't fetch the Apple file from `canopysf.com`
+(since iOS 14). Apple's CDN fetches it, within a day of an app install
+asking for it, and phones check for changes about once a week. So a
+change can take days to reach phones, and a broken file stays broken
+that long. While developing, the app's entitlement can say
+`webcredentials:canopysf.com?mode=developer`, which goes straight to the
+site, on a phone with Developer Mode on, for a development-signed build
+only. What the CDN has: `curl
+https://app-site-association.cdn-apple.com/a/v1/canopysf.com`.
+
+**Checking them.** `curl -sI` each URL above: a `200`, `content-type:
+application/json`, no `location:`. For Android, Google's own reading of
+it: `https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://canopysf.com&relation=delegate_permission/common.get_login_creds`.
+
 ## The Origin check
 
 Every request that changes something (anything but GET, HEAD or OPTIONS)
