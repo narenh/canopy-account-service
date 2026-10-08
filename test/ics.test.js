@@ -161,3 +161,20 @@ test('answers are kept, asked once at a time, and the last good one stands in fo
   sites[0].allowsUnverified = false;
   assert.deepEqual(await cal2.entriesFor({ id: 'p3', emailVerifiedAt: null }), { entries: [] });
 });
+
+test('the same entries make the same feed, however the sites happen to answer', async () => {
+  // Two sites, entries at the same start (so only the UID orders them),
+  // answering after random delays: the merged text never changes.
+  const sites = ['a', 'b'].map((id) => ({ id, name: id, calendarUrl: `http://${id}.test`, secret: 'cnc_x', allowsUnverified: true }));
+  const fetchImpl = async (url) => {
+    await new Promise((r) => setTimeout(r, Math.random() * 20));
+    const host = new URL(url).hostname;
+    const list = [entry({ uid: `2@${host}` }), entry({ uid: `1@${host}` })];
+    return new Response(JSON.stringify({ entries: Math.random() < 0.5 ? list : list.reverse() }), { status: 200 });
+  };
+  const cal = createCalendar({ sites: () => sites, fetchImpl, freshMs: 0, log: quiet });
+  const texts = new Set();
+  for (let i = 0; i < 20; i++) texts.add(buildCalendar((await cal.entriesFor({ id: 'p1', emailVerifiedAt: 1 })).entries));
+  assert.equal(texts.size, 1);
+  assert.deepEqual(checkIcs([...texts][0]).map((e) => e.uid), ['1@a.test', '1@b.test', '2@a.test', '2@b.test']);
+});

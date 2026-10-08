@@ -40,12 +40,19 @@ async function fakeSite(host) {
   return site;
 }
 
+// Fixed for the whole file. A fake site that worked its times out from
+// Date.now() on every request would send a new start whenever the feed
+// asks it again (every FRESH_MS here), and the feed's text, and so its
+// ETag, would change whenever that crossed a second: a real change, as far
+// as the feed can tell, and a flaky 304 test.
+const NOW = Date.now();
+
 function entry(site, id, over = {}) {
   return {
     uid: `${id}@${site.host}`,
     title: `${site.host} ${id}`,
-    start: new Date(Date.now() + 86400e3).toISOString(),
-    end: new Date(Date.now() + 90000e3).toISOString(),
+    start: new Date(NOW + 86400e3).toISOString(),
+    end: new Date(NOW + 90000e3).toISOString(),
     allDay: false,
     timeZone: 'America/Los_Angeles',
     location: 'Somewhere, 1 Market St',
@@ -169,7 +176,7 @@ test('the feed merges every site, signed, and is valid iCalendar with an ETag', 
   const tickets = await addSite(t, admin, 'tickets', 'tickets.canopysf.com');
   const ana = browser(server);
   const anaId = (await ana.signUp('ana@example.com', 'Ana', 'Lima')).data.person.id;
-  const later = (h) => new Date(Date.now() + h * 3600e3).toISOString();
+  const later = (h) => new Date(NOW + h * 3600e3).toISOString();
   events.entries = (id) => (id === anaId ? [
     entry(events, 'e2', { start: later(48), end: later(50), title: 'Dinner, with friends; bring wine', status: 'tentative', description: 'On the waitlist' }),
     entry(events, 'e1', { start: later(24), end: null, status: 'cancelled' }),
