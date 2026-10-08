@@ -367,6 +367,12 @@ test('apps, end to end', async (t) => {
     assert.deepEqual((await sessionFor(tickets, dan.token)).data, { person: null });
   });
 
+  await t.test('an unknown app path is a JSON 404', async () => {
+    const r = await nativeApp(server).get('/nope');
+    assert.equal(r.status, 404);
+    assert.equal(r.data.reason, 'not_found');
+  });
+
   await t.test('no admin-only answers from the app', async () => {
     const r = await nativeApp(server).signUp('eve@example.com', 'Eve', 'Ewe');
     assert.equal(r.data.person.isAdmin, false);

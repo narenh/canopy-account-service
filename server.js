@@ -1314,6 +1314,10 @@ native.get('/openapi.yaml', (req, res) => {
   res.send(OPENAPI);
 });
 
+// Anything else under /api/native/v1 is an app asking for something that
+// isn't there: JSON, like every other answer it gets, not a page.
+native.use((req, res) => res.status(404).json({ error: 'not found', reason: 'not_found' }));
+
 // ---------------- Admin ----------------
 
 function adminPersonView(req, p) {

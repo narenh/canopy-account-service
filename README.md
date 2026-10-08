@@ -580,7 +580,12 @@ trusted for this.
 | Quick accounts made | | 10 per hour | 50 per hour |
 | Lookups by phone or Instagram | 30 per asker per hour, 100 per day | 60 per hour | 300 per hour |
 
-On top of that, each code dies after 5 wrong tries.
+On top of that, each code dies after 5 wrong tries. The apps count in
+the same counters as the web (they run the same code, see "Apps"), so
+none of these doubles by trying from both. "Per browser" is per sign-in
+ceremony for an app; like a browser clearing its cookie, an app can
+begin a fresh one, so the per-address limits and the ceilings are what
+hold there.
 
 **Why those numbers for quick sign-ups.** No email goes out, so neither
 the inbox nor iCloud's daily limit holds them back. Each try answers
