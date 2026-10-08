@@ -45,7 +45,8 @@ is this**, **what's their name and photo**, and **are they signed in**.
   for whether it **allows quick (unverified) accounts** and whether it
   **can find people by phone number or Instagram**, and a box for each of
   the visitor's own contact details it may be told (none for a new
-  site); and the sign-in
+  site); **Lookups**, who has been finding people by phone or Instagram
+  and how often they missed (see "The lookup log"); and the sign-in
   page's logo and backdrop (each can be removed again).
 - The **iOS and Android apps** sign in through `/api/native/v1`, with
   the same passkeys, codes and quick sign-up, and get a token to send as
@@ -84,7 +85,8 @@ feeds stay in tickets, keyed by the person ids from here.
 - `lib/db.js` is persistence: one SQLite file, `DATA_DIR/account.db`.
   Its tables are `people`, `passkeys`, `sessions` (one per browser, keyed
   by the hash of its cookie), `setup_links` (hashed), `apps` (the sites,
-  with hashed keys) and `meta` (who the admin is). Every contact detail in
+  with hashed keys), `lookup_log` (every lookup by phone or Instagram)
+  and `meta` (who the admin is). Every contact detail in
   it is encrypted, here and nowhere else (see "Contact details at
   rest"). The schema version
   lives in SQLite's `user_version`. A database from a version this code
@@ -1134,6 +1136,82 @@ numbers to names. Every lookup counts, found or not:
   area code. Like the other ceilings, it trips for everyone: someone who
   uses it up stops lookups for that hour.
 
+### The lookup log
+
+The limits slow a scraper down; the log is for noticing one. Every
+lookup a site makes is written to `lookup_log`, found or not, and
+refused or not:
+
+- **who asked** (their person id; none when nobody signed in asked),
+- **which site** asked,
+- **what kind** (`phone` or `instagram`),
+- **what was looked for, as a keyed hash**: the same HMAC as the lookup
+  columns (see "Contact details at rest"), of the cleaned value. Never the
+  number or handle itself. None when it couldn't be cleaned (`bad_phone`)
+  or wasn't read (refused before that),
+- **whether it found someone**, and **whether it was refused, and why**
+  (the answer's `reason`: `lookup_not_allowed`, `signed_out`,
+  `email_unverified`, `one_of`, `rate_limited`, `bad_phone`,
+  `bad_instagram`),
+- **the visitor's address, as a keyed hash** (the same key). Telling
+  addresses apart is all the log needs, so it doesn't keep the address
+  itself; it's personal data, and it would sit in every backup,
+- and **when**.
+
+**Kept 90 days**, and pruned on the same daily run as the snapshots (just
+before each one, so a snapshot doesn't carry what's expired). Long enough
+to look back over a slow, patient run through numbers (the limits hold
+one asker to 100 a day, so a real attempt takes weeks or months), and to
+answer "how did they find me?" when someone asks weeks later. No longer,
+because the log is a record of who looked for whom, copied into every
+backup. A deleted account's entries stay under its id until they age out.
+Refusals that come before the limits are counted (not switched on, signed
+out, not verified, not one of the two, rate limited) are written down at
+most 30 an hour per asker (or per address, when nobody signed in asked)
+and 600 an hour in all, so the log can't be used to fill the disk; every
+other entry is already held back by the lookup limits.
+
+**When it looks wrong.** Someone working through numbers misses almost
+every time. A host inviting friends misses now and then (a friend who
+isn't on Canopy, a typo), but rarely ten times running. So an asker, or
+an address, is flagged for:
+
+- **10 misses in a row** (lookups that ran and found nobody);
+- in the last day, **at least 20 lookups with 80% or more missed**;
+- **running into the lookup limits** at all in the last day.
+
+There's no alerting channel yet, so a flag is a line in the server's log,
+once a day per asker or address:
+
+```
+[canopy-account] lookup alert: asker 6f1c2b9e-... (site events): 10 misses in a row. See the Account Manager's Lookups tab.
+```
+
+and the Account Manager's **Lookups** tab lists everyone who looked
+anyone up in the last week, flagged ones first, with how many lookups,
+how many found someone, the share that missed, how many were refused,
+which sites, and why they're flagged; then any address that's flagged,
+by the first characters of its hash. The thresholds are `LOOKUP_ALERT` in
+`server.js`. A flag blocks nothing: the limits do that. What to do about
+one is the admin's call (ask the person, turn the site's lookup off, or
+delete the account).
+
+**What an admin can learn from it, and what they can't.** From the
+Lookups tab: who has been looking people up, on which site, how often,
+how often they found someone, and whether one address is behind several
+askers. Not what anyone looked for: the tab never shows a target, and the
+database never holds one in plain text. A target hash can't be turned
+back into a number by itself, and a copy of the database (a snapshot)
+gives nothing more, because the hashes are keyed. **But it isn't
+irreversible to someone with the live server's keys.** Phone numbers are
+few enough to try them all, so whoever has `LOOKUP_HMAC_KEY` could hash
+every number in an area code and see which ones were looked up, and by
+whom; the same goes for addresses. That's the same line as everywhere
+else in "Contact details at rest": the log protects copies, not the live
+server. Without doing that, all anyone can tell is that two entries were
+for the same target (equal hashes), which is what shows someone asking
+for the same person over and over.
+
 ## Contact details at rest
 
 Everyone's email, phone number, Instagram, Venmo and Cash App is
@@ -1500,7 +1578,8 @@ Version 9 encrypted the contact details (see "Contact details at rest"):
 every row is sealed in the upgrade's one transaction, the plain-text
 indexes go, keyed-hash columns and their indexes come in, and the file
 is rebuilt with `VACUUM` so none of the plain text is left in it. It
-needs the keys set before it runs.
+needs the keys set before it runs. Version 10 added the lookup log
+(`lookup_log`, see "The lookup log"), empty to start with.
 
 **Backups.** Two layers, the same as tickets:
 

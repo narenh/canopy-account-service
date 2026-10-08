@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
-const { init, SEALED_COLUMNS } = require('../lib/db');
+const { init, SEALED_COLUMNS, SCHEMA_VERSION } = require('../lib/db');
 const { createContactCrypto, parseEncryptionKeys, parseHmacKey, fromEnv } = require('../lib/contactCrypto');
 const { startServer, browser, TEST_KEYS } = require('./harness');
 
@@ -271,7 +271,7 @@ test('the upgrade to version 9 seals a populated database in one go, and leaves 
     console.warn = warn;
   }
   assert.ok(said.some((l) => /Snapshots in backups\/sqlite made before this upgrade/.test(l)));
-  assert.equal(store.db.pragma('user_version', { simple: true }), 9);
+  assert.equal(store.db.pragma('user_version', { simple: true }), SCHEMA_VERSION);
   const rows = store.db.prepare('SELECT * FROM people').all();
   for (const r of rows) {
     for (const [col] of SEALED_COLUMNS.people) if (r[col] !== null) assert.match(r[col], /^v1:k1:/, `${r.id}.${col}`);

@@ -52,6 +52,9 @@
   .fields .switch{margin-top:0;}
   .fields-hint{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.4;}
   .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+  .tag.warn{background:#b8572a;color:#ffffff;}
+  .concern{font-size:12px;color:#f3b38f;margin-top:4px;}
+  .sub-heading{font-size:14px;margin:18px 0 6px;}
   .actions button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .inline-form{display:flex;gap:8px;margin-bottom:14px;}
   .inline-form input{margin:0;}
@@ -87,6 +90,7 @@
   <div class="tabs">
     <button type="button" data-tab="people" data-copy="admin.peopleTab"></button>
     <button type="button" data-tab="sites" data-copy="admin.sitesTab"></button>
+    <button type="button" data-tab="lookups" data-copy="admin.lookupsTab"></button>
     <button type="button" data-tab="settings" data-copy="admin.settingsTab"></button>
   </div>
   <div class="error" id="pageError"></div>
@@ -103,6 +107,15 @@
       <button type="submit" id="addSiteBtn" data-copy="admin.addSite"></button>
     </form>
     <div id="siteList"></div>
+  </section>
+
+  <!-- Who's been finding people by phone or Instagram: counts, never what
+       they looked for (see "The lookup log" in the README). -->
+  <section class="panel hidden" id="lookups">
+    <p data-copy="admin.lookupsHint"></p>
+    <div id="lookupList"></div>
+    <h3 class="sub-heading hidden" id="lookupAddressesHeading" data-copy="admin.lookupAddresses"></h3>
+    <div id="lookupAddressList"></div>
   </section>
 
   <section class="panel hidden" id="settings">
@@ -193,7 +206,7 @@ applyCopy();
 document.getElementById('siteName').placeholder = t('admin.siteName');
 
 // ---------------- Tabs (in the URL hash, so reload keeps the tab) ----------------
-const TABS = ['people', 'sites', 'settings'];
+const TABS = ['people', 'sites', 'lookups', 'settings'];
 function showTab(name){
   if (!TABS.includes(name)) name = 'people';
   TABS.forEach(tab => document.getElementById(tab).classList.toggle('hidden', tab !== name));
@@ -201,6 +214,7 @@ function showTab(name){
   if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
   if (name === 'people') loadPeople();
   if (name === 'sites') loadSites();
+  if (name === 'lookups') loadLookups();
   if (name === 'settings') loadImages();
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -498,6 +512,64 @@ document.getElementById('addSiteForm').addEventListener('submit', async (e) => {
   btn.disabled = false;
   loadSites();
 });
+
+// ---------------- Lookups ----------------
+// The last week's lookups by phone or Instagram, by asker (and any
+// address that looks wrong): how many, how many found someone, how many
+// were refused. What they looked for is never shown, or even stored.
+function lookupLine(r){
+  const rate = r.lookups ? Math.round(100 * r.missed / r.lookups) : 0;
+  return t('admin.lookupCounts', { lookups: r.lookups, found: r.found, rate, refused: r.refused });
+}
+function lookupRow(name, r, sub){
+  const row = document.createElement('div');
+  row.className = 'row';
+  const who = document.createElement('div');
+  who.className = 'who';
+  const top = document.createElement('div');
+  top.className = 'name';
+  top.textContent = name;
+  if (r.concerns.length){
+    const tag = document.createElement('span');
+    tag.className = 'tag warn';
+    tag.textContent = t('admin.suspicious');
+    top.appendChild(tag);
+  }
+  const line = document.createElement('div');
+  line.className = 'sub';
+  line.textContent = lookupLine(r) + ' · ' + sub;
+  who.append(top, line);
+  r.concerns.forEach((c) => {
+    const el = document.createElement('div');
+    el.className = 'concern';
+    el.textContent = c;
+    who.appendChild(el);
+  });
+  row.appendChild(who);
+  return row;
+}
+async function loadLookups(){
+  document.getElementById('pageError').textContent = '';
+  let data;
+  try{ data = await api('GET', '/api/admin/lookups'); }catch(e){ fail(e); return; }
+  const list = document.getElementById('lookupList');
+  list.innerHTML = '';
+  if (!data.askers.length){
+    const p = document.createElement('p');
+    p.textContent = t('admin.noLookups');
+    list.appendChild(p);
+  }
+  data.askers.forEach((a) => {
+    const sub = t('admin.lookupWhere', { sites: a.sites.join(', '), date: formatDate(a.lastAt) });
+    list.appendChild(lookupRow(a.name || t('admin.formerMember'), a, sub));
+  });
+  const addresses = document.getElementById('lookupAddressList');
+  addresses.innerHTML = '';
+  document.getElementById('lookupAddressesHeading').classList.toggle('hidden', !data.addresses.length);
+  data.addresses.forEach((a) => {
+    addresses.appendChild(lookupRow(t('admin.address', { id: a.address }), a, t('admin.lookupAskers', { count: a.askers, date: formatDate(a.lastAt) })));
+  });
+}
 
 // ---------------- Settings: logo and backdrop ----------------
 function loadImages(){

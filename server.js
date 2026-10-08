@@ -1587,6 +1587,35 @@ app.patch('/api/admin/apps/:id', (req, res) => {
   res.json({ app: site });
 });
 
+// The admin's Lookups: the last week of the lookup log, by asker, and the
+// addresses that look wrong. Counts and reasons only: never a target, and
+// an address only as the first characters of its keyed hash.
+app.get('/api/admin/lookups', (req, res) => {
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const siteNames = new Map(store.listApps().map((a) => [a.id, a.name]));
+  const counts = (r) => ({
+    lookups: r.lookups || 0, found: r.found || 0, missed: r.missed || 0, refused: r.refused || 0,
+    rateLimited: r.rateLimited || 0, lastAt: r.lastAt
+  });
+  const askers = store.lookupAskers(since).map((r) => {
+    const p = store.getPerson(r.askerId);
+    return {
+      personId: r.askerId,
+      // null: a deleted account (a former member).
+      name: p ? `${p.firstName} ${p.lastName}` : null,
+      sites: String(r.sites || '').split(',').filter(Boolean).map((id) => siteNames.get(id) || id),
+      addresses: r.addresses,
+      ...counts(r),
+      concerns: lookupConcerns({ askerId: r.askerId })
+    };
+  });
+  const addresses = store.lookupAddresses(since)
+    .map((r) => ({ address: r.addressHash.slice(0, 12), askers: r.askers, ...counts(r), concerns: lookupConcerns({ addressHash: r.addressHash }) }))
+    .filter((a) => a.concerns.length);
+  const order = (a, b) => (b.concerns.length > 0) - (a.concerns.length > 0) || b.lookups + b.refused - (a.lookups + a.refused);
+  res.json({ since, askers: askers.sort(order), addresses: addresses.sort(order) });
+});
+
 app.post('/api/admin/apps/:id/revoke', (req, res) => {
   if (!store.revokeApp(req.params.id)) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
@@ -1700,30 +1729,108 @@ const lookupLimits = {
   }
 };
 
+// ---- The lookup log ----
+//
+// Every lookup a site makes is written down (lib/db.js, lookup_log): who
+// asked, from which site and address, whether it was refused (and why),
+// and whether it found anyone. What was looked for is kept only as the
+// keyed hash the lookup itself uses, and the address as a keyed hash too,
+// so the log holds no number, handle or IP. It's for noticing someone
+// working through numbers, which looks like a lot of misses:
+//
+//   - 10 misses in a row, from one asker or one address; or
+//   - in the last day, at least 20 lookups of which 80% or more missed; or
+//   - running into the limits at all.
+//
+// A host inviting friends by number misses now and then (a friend who
+// isn't on Canopy, a number typed wrong); ten in a row, or a day of almost
+// nothing but misses, is someone guessing. There's no alerting channel
+// yet, so it's a warning line in the log (once a day per asker or address)
+// and the admin's Lookups tab. Neither ever shows a target.
+//
+// Refusals that come before the limits count (signed out, not switched
+// on, not verified, not one of phone or instagram, rate limited) are
+// written down at most 30 an hour per asker or address and 600 an hour in
+// all, so the log can't be used to fill the disk.
+const LOOKUP_ALERT = { streak: 10, dayAtLeast: 20, dayMissRate: 0.8 };
+// Per asker, or per visitor address when nobody signed in asked (not
+// clientIp: that's the site's own server here).
+const lookupRefusalLog = { who: attemptLimiter(30, HOUR), all: attemptLimiter(600, HOUR) };
+const lookupAlerted = new Map();
+
+// What's suspicious about one asker ({ askerId }) or address ({ addressHash })
+// right now: a list of reasons, empty when nothing is.
+function lookupConcerns(who) {
+  const day = store.lookupStats(who, Date.now() - 24 * HOUR);
+  const streak = store.missStreak(who);
+  const reasons = [];
+  if (streak >= LOOKUP_ALERT.streak) reasons.push(`${streak} misses in a row`);
+  if (day.lookups >= LOOKUP_ALERT.dayAtLeast && day.missed / day.lookups >= LOOKUP_ALERT.dayMissRate) {
+    reasons.push(`${Math.round((100 * day.missed) / day.lookups)}% of ${day.lookups} lookups missed in a day`);
+  }
+  if (day.rateLimited) reasons.push(`hit the lookup limits ${day.rateLimited} time(s) in a day`);
+  return reasons;
+}
+
+// Says so in the log, once a day per asker and per address.
+function warnAboutLookups(entry) {
+  const today = new Date().toISOString().slice(0, 10);
+  const check = (key, who, label) => {
+    if (lookupAlerted.get(key) === today) return;
+    const reasons = lookupConcerns(who);
+    if (!reasons.length) return;
+    lookupAlerted.set(key, today);
+    if (lookupAlerted.size > 10000) lookupAlerted.clear();
+    console.warn(`[canopy-account] lookup alert: ${label} (site ${entry.siteName}): ${reasons.join('; ')}. See the Account Manager's Lookups tab.`);
+  };
+  if (entry.askerId) check(`asker:${entry.askerId}`, { askerId: entry.askerId }, `asker ${entry.askerId}`);
+  if (entry.addressHash) check(`address:${entry.addressHash}`, { addressHash: entry.addressHash }, `address #${entry.addressHash.slice(0, 12)}`);
+}
+
+// Writes one lookup down, and looks for a pattern.
+function logLookup(entry, { matched = false, refused = null } = {}) {
+  if (refused && refused !== 'bad_phone' && refused !== 'bad_instagram') {
+    const who = entry.askerId || `address:${entry.addressHash}`;
+    if (lookupRefusalLog.who.blocked(who) || lookupRefusalLog.all.blocked('all')) return;
+    lookupRefusalLog.who.hit(who);
+    lookupRefusalLog.all.hit('all');
+  }
+  store.logLookup({ ...entry, matched, refused });
+  warnAboutLookups(entry);
+}
+
 app.post('/api/people/lookup', requireSite, (req, res) => {
   res.set('Cache-Control', 'no-store');
-  if (!req.site.allowsLookup) return res.status(403).json({ error: 'this site may not look people up', reason: 'lookup_not_allowed' });
   const token = session.readToken(`${session.COOKIE}=${req.get('x-canopy-session') || ''}`);
   const s = token && store.getSessionByToken(token);
   const asker = s && s.personId ? store.getPerson(s.personId) : null;
-  if (!asker) return res.status(401).json({ error: 'not signed in', reason: 'signed_out' });
-  if (!asker.emailVerifiedAt) return res.status(403).json({ error: 'confirm your email first', reason: 'email_unverified' });
+  const address = String(req.get('x-canopy-visitor-ip') || clientIp(req)).slice(0, 64);
+  const entry = { siteId: req.site.id, siteName: req.site.name, askerId: asker ? asker.id : null, addressHash: store.lookupHash('address', address) };
+  const refuse = (status, body) => {
+    logLookup(entry, { refused: body.reason });
+    return res.status(status).json(body);
+  };
+  if (!req.site.allowsLookup) return refuse(403, { error: 'this site may not look people up', reason: 'lookup_not_allowed' });
+  if (!asker) return refuse(401, { error: 'not signed in', reason: 'signed_out' });
+  if (!asker.emailVerifiedAt) return refuse(403, { error: 'confirm your email first', reason: 'email_unverified' });
 
   // Strings only: exactly one of the two, as someone typed it.
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
   const { phone, instagram } = body;
   if ((phone === undefined) === (instagram === undefined) || (phone !== undefined && typeof phone !== 'string')
     || (instagram !== undefined && typeof instagram !== 'string')) {
-    return res.status(400).json({ error: 'give one of phone or instagram', reason: 'one_of' });
+    return refuse(400, { error: 'give one of phone or instagram', reason: 'one_of' });
   }
-  const address = String(req.get('x-canopy-visitor-ip') || clientIp(req)).slice(0, 64);
-  if (lookupLimits.blocked(asker.id, address)) return tooMany(res);
+  entry.kind = phone !== undefined ? 'phone' : 'instagram';
+  if (lookupLimits.blocked(asker.id, address)) return refuse(429, { error: 'too many tries -- wait a few minutes', reason: 'rate_limited' });
   lookupLimits.hit(asker.id, address);
 
   const wanted = phone !== undefined ? { phone: cleanPhone(phone) } : { instagram: cleanInstagram(instagram) };
-  if (wanted.phone === false || wanted.phone === null) return res.status(400).json(BAD_PHONE);
-  if (wanted.instagram === false || wanted.instagram === null) return res.status(400).json(BAD_INSTAGRAM);
+  if (wanted.phone === false || wanted.phone === null) return refuse(400, BAD_PHONE);
+  if (wanted.instagram === false || wanted.instagram === null) return refuse(400, BAD_INSTAGRAM);
+  entry.targetHash = store.lookupHash(entry.kind, wanted[entry.kind]);
   const found = store.findPerson(wanted);
+  logLookup(entry, { matched: !!found });
   res.json({ person: found ? publicPersonView(req, found) : null });
 });
 

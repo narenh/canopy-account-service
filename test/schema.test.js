@@ -30,6 +30,7 @@ test('a version 1 database is brought up to date', () => {
     old.exec('ALTER TABLE people DROP COLUMN findable');
     ['client_kind', 'client_name', 'signed_in_at'].forEach((c) => old.exec(`ALTER TABLE sessions DROP COLUMN ${c}`));
     old.exec('ALTER TABLE apps DROP COLUMN contact_fields');
+    old.exec('DROP TABLE lookup_log');
     // p1's email was proven; p2's was changed by the admin (null), which
     // before version 5 changed nothing.
     old.prepare("INSERT INTO people (id, email, first_name, last_name, email_verified_at, created_at, updated_at) VALUES ('p1', 'a@b.co', 'A', 'B', 5, 1, 1)").run();
@@ -71,6 +72,8 @@ test('a version 1 database is brought up to date', () => {
     // getting; one made after gets none until the admin grants them.
     assert.deepEqual(store.listApps()[0].contactFields, ['email', 'phone', 'instagram', 'venmo', 'cashapp']);
     assert.deepEqual(store.createApp('events').app.contactFields, []);
+    // Version 10: the lookup log, empty.
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM lookup_log').get().n, 0);
     store.db.close();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
