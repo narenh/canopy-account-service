@@ -644,6 +644,7 @@ function finishSignIn(req, res, personId) {
   const { token, idHash } = store.rotateSession(req.sess.idHash);
   res.append('Set-Cookie', session.cookieHeader(token, req.hostname));
   store.signIn(idHash, personId);
+  store.markSignedIn(idHash, { kind: 'web', name: session.browserName(req.get('user-agent')) });
   if (granted) {
     store.takeAdminSetup(idHash);
     if (!store.getAdminPersonId()) store.setAdminPersonId(personId);
@@ -779,6 +780,48 @@ function signOut(req, res) {
 }
 
 app.post('/api/signout', attachSession(false), (req, res) => {
+  signOut(req, res);
+  res.json({ ok: true });
+});
+
+// ---------------- Where you're signed in ----------------
+//
+// The profile lists every browser and app signed in as you (each one a
+// session), with a way to sign any of them out, and to sign out of all of
+// them at once: someone who left a laptop signed in, or lost a phone with
+// the app on it, shouldn't need the admin for that. Only ever your own.
+
+function sessionView(req, s) {
+  return {
+    id: s.publicId,
+    // 'web', 'ios' or 'android'.
+    kind: s.clientKind || 'web',
+    // "Safari on iPhone", "Canopy Events on iPhone", or null when it
+    // didn't say.
+    name: s.clientName,
+    signedInAt: s.signedInAt || s.createdAt,
+    lastSeenAt: s.lastSeenAt,
+    current: s.idHash === req.sess.idHash
+  };
+}
+
+app.get('/api/profile/sessions', requireSignedIn, (req, res) => {
+  res.json({ sessions: store.sessionsOf(req.person.id).map((s) => sessionView(req, s)) });
+});
+
+// One of them, by the id the list gave. This one is the same as signing
+// out.
+app.delete('/api/profile/sessions/:id', requireSignedIn, (req, res) => {
+  const ended = store.endSessionOf(req.person.id, req.params.id);
+  if (!ended) return res.status(404).json({ error: 'not found' });
+  const current = ended.idHash === req.sess.idHash;
+  if (current) signOut(req, res);
+  res.json({ ok: true, current });
+});
+
+// Every browser and app, this one included.
+app.post('/api/signout/everywhere', requireSignedIn, (req, res) => {
+  store.endSessionsOf(req.person.id);
   signOut(req, res);
   res.json({ ok: true });
 });

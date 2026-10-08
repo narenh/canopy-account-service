@@ -128,6 +128,16 @@ const COPY = {
     addPasskey: 'Add a passkey',
     added: 'Passkey added.',
     signOut: 'Sign out of all Canopy sites',
+    // Every browser and app signed in as you.
+    sessionsHeading: 'Signed in on',
+    sessionBrowser: 'A browser',
+    sessionIos: 'An iPhone or iPad app',
+    sessionAndroid: 'An Android app',
+    sessionThis: 'This browser',
+    sessionSeen: 'last active {date}',
+    sessionSignOut: 'Sign out',
+    signOutEverywhere: 'Sign out everywhere',
+    signOutEverywhereConfirm: 'Sign out of every browser and app you’re signed in on, this one included?',
     // The admin's way back from their own profile.
     admin: 'Back to manager',
     // An account whose email isn't proven yet: a quick sign-up, or an

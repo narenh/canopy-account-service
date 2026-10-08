@@ -19,7 +19,9 @@ is this**, **what's their name and photo**, and **are they signed in**.
   Venmo and Cash App, choose whether **people who know their phone number
   or Instagram can find them** (on unless they turn it off), see their
   passkeys (add one, remove one they've
-  lost) and sign out. **Changing their email** takes three steps: their
+  lost), see **where they're signed in** (each browser and app, with
+  **Sign out** on any of them, and **Sign out everywhere**) and sign out.
+  **Changing their email** takes three steps: their
   passkey (Face ID or the like, so a borrowed unlocked phone or a stolen
   cookie isn't enough; good for 15 minutes and one change), a code sent
   to the new address and typed back, and then a notice to the old
@@ -324,6 +326,19 @@ are:
 On the server, a signed-in session lasts a year from when it was last
 seen. One that never signed in (a sign-in started and abandoned) lasts
 a day.
+
+**Where you're signed in.** Each session remembers what it is: a browser
+(named from its `User-Agent` when it signs in, like "Safari on iPhone")
+or an app (named by the app, see "Apps"). The profile lists them, most
+recently seen first, and any of them can be signed out from there, or
+all of them at once with **Sign out everywhere**. Someone who left a
+laptop signed in somewhere, or lost a phone, doesn't need the admin for
+that. `GET /api/profile/sessions` is the list (`{id, kind, name,
+signedInAt, lastSeenAt, current}`), `DELETE /api/profile/sessions/:id`
+signs one out, and `POST /api/signout/everywhere` signs out all of them.
+The `id` is derived from the session's hash, never the hash itself. The
+name is only a label: anything can send any `User-Agent`, so nothing
+else depends on it.
 
 **Why only its hash is stored.** The database keeps the token's SHA-256,
 never the token. A copy of `account.db` gets made all the time: the
@@ -896,7 +911,9 @@ database counts as verified (including anyone whose email the admin had
 changed, which until then changed nothing), and every site starts with
 unverified accounts not allowed. Version 6 added the lookup: everyone
 already here gets `FINDABLE_BY_DEFAULT`, and no site may look people up
-until the admin switches it on.
+until the admin switches it on. Version 7 added what each session is
+(`client_kind`, `client_name`) and when it signed in: every signed-in
+session already here is a browser's, signed in when it started.
 
 **Backups.** Two layers, the same as tickets:
 

@@ -11,18 +11,19 @@
   .stack .card{max-width:none;}
   h3{font-size:15px;margin:0 0 4px;}
   .card > p.left{text-align:left;}
-  .passkey{
+  /* A row in the passkeys list, and in where you're signed in. */
+  .passkey, .session{
     display:flex;
     align-items:center;
     gap:10px;
     padding:12px 0;
     border-top:1px solid var(--line);
   }
-  .passkey:first-child{border-top:none;}
-  .passkey svg{width:20px;height:20px;flex:0 0 auto;color:var(--accent);}
-  .passkey .what{flex:1;min-width:0;font-size:13px;line-height:1.35;}
-  .passkey .what span{color:var(--muted);display:block;font-size:12px;}
-  .passkey button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
+  .passkey:first-child, .session:first-child{border-top:none;}
+  .passkey svg, .session svg{width:20px;height:20px;flex:0 0 auto;color:var(--accent);}
+  .passkey .what, .session .what{flex:1;min-width:0;font-size:13px;line-height:1.35;}
+  .passkey .what span, .session .what span{color:var(--muted);display:block;font-size:12px;}
+  .passkey button, .session button{width:auto;padding:6px 10px;font-size:12px;border-radius:8px;}
   .email-line{color:var(--muted);font-size:13px;text-align:center;margin:0 0 16px;}
   /* The admin's way back to the Account Manager, over the page. */
   .page-head{max-width:400px;margin:0 auto 12px;min-height:18px;}
@@ -135,6 +136,13 @@
       <div class="error" id="passkeyError"></div>
       <div class="notice" id="passkeyNotice"></div>
       <button type="button" class="secondary passkey-btn" id="addPasskeyBtn" data-copy="profile.addPasskey"></button>
+    </div>
+
+    <div class="card">
+      <h3 data-copy="profile.sessionsHeading"></h3>
+      <div id="sessionList"></div>
+      <div class="error" id="sessionError"></div>
+      <button type="button" class="secondary" id="signOutEverywhereBtn" data-copy="profile.signOutEverywhere"></button>
     </div>
 
     <button type="button" class="danger" id="signOutBtn" data-copy="profile.signOut"></button>
@@ -337,6 +345,53 @@ document.getElementById('addPasskeyBtn').addEventListener('click', (e) => {
   });
 });
 
+// ---------------- Where you're signed in ----------------
+
+const DEVICE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 2h8a2.5 2.5 0 0 1 2.5 2.5v15A2.5 2.5 0 0 1 16 22H8a2.5 2.5 0 0 1-2.5-2.5v-15A2.5 2.5 0 0 1 8 2zm0 2a.5.5 0 0 0-.5.5v15a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5v-15A.5.5 0 0 0 16 4zm2.5 13h3a1 1 0 0 1 0 2h-3a1 1 0 0 1 0-2z"/></svg>';
+
+async function loadSessions(){
+  const res = await fetch('/api/profile/sessions');
+  if (signedOut(res)) return;
+  const { sessions } = await res.json();
+  const list = document.getElementById('sessionList');
+  list.innerHTML = '';
+  sessions.forEach((s) => {
+    const row = document.createElement('div');
+    row.className = 'session';
+    row.innerHTML = DEVICE_ICON + '<div class="what"></div>';
+    const what = row.querySelector('.what');
+    what.textContent = s.name || t(s.kind === 'ios' ? 'profile.sessionIos' : s.kind === 'android' ? 'profile.sessionAndroid' : 'profile.sessionBrowser');
+    const sub = document.createElement('span');
+    sub.textContent = s.current ? t('profile.sessionThis') : t('profile.sessionSeen', { date: formatDate(s.lastSeenAt) });
+    what.appendChild(sub);
+    if (!s.current){
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'danger';
+      btn.textContent = t('profile.sessionSignOut');
+      btn.addEventListener('click', () => endSession(s.id, btn));
+      row.appendChild(btn);
+    }
+    list.appendChild(row);
+  });
+}
+
+function endSession(id, btn){
+  busy(btn, document.getElementById('sessionError'), async () => {
+    const { res } = await sendJson('DELETE', '/api/profile/sessions/' + encodeURIComponent(id));
+    if (signedOut(res)) return;
+    loadSessions();
+  });
+}
+
+document.getElementById('signOutEverywhereBtn').addEventListener('click', (e) => {
+  if (!confirm(t('profile.signOutEverywhereConfirm'))) return;
+  busy(e.currentTarget, document.getElementById('sessionError'), async () => {
+    await postJson('/api/signout/everywhere');
+    window.location.href = '/';
+  });
+});
+
 // ---------------- Changing your email ----------------
 const STEPS = ['stepPasskey', 'stepAddress', 'stepCode'];
 function showStep(id){
@@ -533,6 +588,7 @@ document.getElementById('signOutBtn').addEventListener('click', (e) => {
   if (!person){ window.location.href = '/'; return; }
   fill(person);
   loadPasskeys();
+  loadSessions();
   if (new URLSearchParams(window.location.search).has('verify')){
     if (!person.emailVerified) openVerifySheet();
     else if (RETURN_URL) window.location.href = RETURN_URL;

@@ -90,32 +90,33 @@ function browser(server, { origin } = {}) {
     upload: (url, form, opts) => request('POST', url, { ...opts, form }),
 
     // The passkey half of a sign-up / new-passkey step, from its options.
-    async makePasskey(optionsRes) {
+    async makePasskey(optionsRes, opts) {
       const response = authenticator.register(optionsRes.data.options, pageOrigin);
-      return this.post('/api/auth/register/verify', { response });
+      return this.post('/api/auth/register/verify', { response }, opts);
     },
 
-    async signInWithPasskey(credId) {
-      const start = await this.post('/api/auth/login/options');
+    async signInWithPasskey(credId, opts) {
+      const start = await this.post('/api/auth/login/options', {}, opts);
       const response = authenticator.authenticate(start.data.options, pageOrigin, credId);
-      return this.post('/api/auth/login/verify', { response });
+      return this.post('/api/auth/login/verify', { response }, opts);
     },
 
     // Email -> code (from the server's console) -> proven. Returns the
     // verify answer.
-    async proveEmail(email) {
-      const start = await this.post('/api/auth/email/start', { email });
+    async proveEmail(email, opts) {
+      const start = await this.post('/api/auth/email/start', { email }, opts);
       if (start.data && start.data.verified) return start;
       if (start.status !== 200) return start;
-      return this.post('/api/auth/email/verify', { code: server.lastCode(email) });
+      return this.post('/api/auth/email/verify', { code: server.lastCode(email) }, opts);
     },
 
-    async signUp(email, firstName, lastName) {
-      const proven = await this.proveEmail(email);
+    // `opts` (headers) go with every step.
+    async signUp(email, firstName, lastName, opts) {
+      const proven = await this.proveEmail(email, opts);
       if (proven.status !== 200 || proven.data.state !== 'new') throw new Error('expected a new email: ' + proven.text);
-      const opts = await this.post('/api/auth/register/new', { firstName, lastName });
-      if (opts.status !== 200) throw new Error('register/new failed: ' + opts.text);
-      return this.makePasskey(opts);
+      const made = await this.post('/api/auth/register/new', { firstName, lastName }, opts);
+      if (made.status !== 200) throw new Error('register/new failed: ' + made.text);
+      return this.makePasskey(made, opts);
     },
 
     // A quick sign-up: name, email, passkey, no code. Returns the
