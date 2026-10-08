@@ -79,3 +79,96 @@ test('the site middleware', async (t) => {
     assert.equal((await (await fetch(siteBase + '/who', { headers: { Cookie: cookie } })).json()).person, null);
   });
 });
+
+test('the site middleware: bearer tokens and unverified people', async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+
+  const admin = browser(server);
+  await admin.post('/api/auth/admin-setup', { password: 'setup-pw' });
+  await admin.signUp('host@example.com', 'Hana', 'Host');
+  const ticketsKey = (await admin.post('/api/admin/apps', { name: 'tickets' })).data.key;
+  const events = (await admin.post('/api/admin/apps', { name: 'events' })).data;
+  await admin.patch(`/api/admin/apps/${events.app.id}`, { allowsUnverified: true });
+  const ana = browser(server);
+  const anaId = (await ana.quickSignUp('ana@example.com', 'Ana', 'Lima')).data.person.id;
+
+  // A site on each key: tickets doesn't allow unverified accounts, events
+  // does. No cache, so each request asks.
+  async function site(key) {
+    const canopy = createCanopyAccount({ url: server.base, key, cacheMs: 0 });
+    const app = express();
+    app.use(canopy.attach);
+    app.get('/who', (req, res) => res.json({ person: req.person, unverified: req.canopyUnverified }));
+    app.get('/mine', canopy.requireSignIn, (req, res) => res.send(`hi ${req.person.firstName}`));
+    app.get('/api/mine', canopy.requireSignIn, (req, res) => res.json({ ok: true }));
+    const listener = await new Promise((resolve) => { const l = app.listen(0, () => resolve(l)); });
+    t.after(() => listener.close());
+    return { canopy, base: `http://localhost:${listener.address().port}` };
+  }
+  const tickets = await site(ticketsKey);
+  const eventsSite = await site(events.key);
+  const who = async (s, headers) => (await fetch(s.base + '/who', { headers })).json();
+  const asCookie = (b) => ({ Cookie: `canopy_session=${b.cookie}` });
+  const asBearer = (b) => ({ Authorization: `Bearer ${b.cookie}` });
+
+  await t.test('quickSignUpUrl and verifyUrl', () => {
+    const req = {};
+    assert.equal(tickets.canopy.quickSignUpUrl(req, 'https://events.canopysf.com/e/x'), `${server.base}/?quick=1&return=https%3A%2F%2Fevents.canopysf.com%2Fe%2Fx`);
+    assert.equal(tickets.canopy.verifyUrl(req, 'https://events.canopysf.com/e/x'), `${server.base}/profile?verify=1&return=https%3A%2F%2Fevents.canopysf.com%2Fe%2Fx`);
+  });
+
+  await t.test('an unverified visitor: nobody on tickets (and told why), themself on events', async () => {
+    assert.deepEqual(await who(tickets, asCookie(ana)), { person: null, unverified: true });
+    const there = await who(eventsSite, asCookie(ana));
+    assert.equal(there.person.id, anaId);
+    assert.equal(there.person.emailVerified, false);
+    assert.equal(there.unverified, false);
+    assert.deepEqual(await who(tickets), { person: null, unverified: false });
+  });
+
+  await t.test('requireSignIn sends them to prove their email: pages by redirect, APIs by a 403', async () => {
+    const page = await fetch(tickets.base + '/mine', { headers: { ...asCookie(ana), Accept: 'text/html' }, redirect: 'manual' });
+    assert.equal(page.status, 302);
+    const loc = new URL(page.headers.get('location'));
+    assert.equal(loc.origin + loc.pathname, server.base + '/profile');
+    assert.equal(loc.searchParams.get('verify'), '1');
+    assert.equal(loc.searchParams.get('return'), tickets.base + '/mine');
+    const api = await fetch(tickets.base + '/api/mine', { headers: asBearer(ana) });
+    assert.equal(api.status, 403);
+    const body = await api.json();
+    assert.equal(body.reason, 'email_unverified');
+    assert.match(body.verify, /\/profile\?verify=1&return=/);
+    assert.equal(await (await fetch(eventsSite.base + '/mine', { headers: asCookie(ana) })).text(), 'hi Ana');
+  });
+
+  await t.test('a bearer token works like the cookie, and wins over it', async () => {
+    assert.equal((await who(tickets, asBearer(admin))).person.firstName, 'Hana');
+    assert.equal((await who(tickets, { ...asBearer(admin), ...asCookie(ana) })).person.firstName, 'Hana');
+    // One that isn't a session token is nobody, not a fall back to the cookie.
+    assert.equal((await who(tickets, { Authorization: 'Bearer nope', ...asCookie(admin) })).person, null);
+    // Other schemes are left alone.
+    assert.equal((await who(tickets, { Authorization: 'Basic eDp5', ...asCookie(admin) })).person.firstName, 'Hana');
+    assert.equal((await fetch(tickets.base + '/api/mine', { headers: asBearer(admin) })).status, 200);
+  });
+
+  await t.test('nothing is sent back as Set-Cookie for a bearer request', async () => {
+    const db = new (require('better-sqlite3'))(require('path').join(server.dataDir, 'account.db'));
+    db.prepare('UPDATE sessions SET cookie_set_at = 0').run();
+    db.close();
+    const viaBearer = await fetch(tickets.base + '/who', { headers: asBearer(admin) });
+    assert.equal(viaBearer.headers.getSetCookie().length, 0);
+    // Still due, so the cookie itself is renewed on its next visit.
+    const viaCookie = await fetch(tickets.base + '/who', { headers: asCookie(admin) });
+    assert.ok(viaCookie.headers.getSetCookie().some((c) => c.startsWith(`canopy_session=${admin.cookie};`)));
+  });
+
+  await t.test('once the email is proven, tickets sees them', async () => {
+    await ana.post('/api/profile/verify/start');
+    assert.equal((await ana.post('/api/profile/verify/check', { code: server.lastCode('ana@example.com') })).status, 200);
+    const now = await who(tickets, asCookie(ana));
+    assert.equal(now.person.id, anaId);
+    assert.equal(now.person.emailVerified, true);
+    assert.equal(now.unverified, false);
+  });
+});

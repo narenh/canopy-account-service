@@ -1,5 +1,6 @@
-// Canopy accounts, for a Canopy site (tickets, the next one...). Copy this
-// one file into the site; it has no dependencies (Node 18+, for fetch).
+// Canopy accounts, for a Canopy site (tickets, events, the next one...).
+// Copy this one file into the site; it has no dependencies (Node 18+, for
+// fetch).
 //
 //   const canopy = require('./lib/canopy-account')({
 //     url: process.env.CANOPY_ACCOUNT_URL,   // https://account.canopysf.com
@@ -11,14 +12,27 @@
 //   app.get('/mine', canopy.requireSignIn, ...);   // signed in, or off to sign in
 //   const people = await canopy.people(ids);       // Map of id -> { firstName, ... }
 //
-// req.person is { id, email, firstName, lastName, shortName, photoUrl,
-// venmo }. photoUrl points at the account service and works straight in
-// an <img> on any Canopy page (the browser sends the cookie along).
+// req.person is { id, email, emailVerified, firstName, lastName,
+// shortName, photoUrl, venmo, phone, instagram, cashapp }: the visitor's
+// own details, never to be shown to anyone else. photoUrl points at the
+// account service and works straight in an <img> on any Canopy page (the
+// browser sends the cookie along).
+//
+// Who the visitor is comes from their canopy_session cookie, or from an
+// `Authorization: Bearer <token>` header carrying the same 43-character
+// value (for native apps; the bearer wins when both are there). Nothing
+// is ever sent back as Set-Cookie for a bearer request.
+//
+// Someone whose email isn't proven yet (a quick sign-up) is only signed in
+// on a site the account admin lets them into. Anywhere else req.person is
+// null and req.canopyUnverified is true: send them to verifyUrl(), which
+// requireSignIn does by itself. On a site that lets them in, req.person
+// is there with emailVerified: false.
 //
 // The answer for each visitor is cached for a minute (`cacheMs`), so a
-// sign-out or a name change can take that long to show here. A person
-// missing from people() has been deleted: show them as a former member,
-// keeping whatever this site recorded for them.
+// sign-out, a name change or a newly confirmed email can take that long to
+// show here. A person missing from people() has been deleted: show them
+// as a former member, keeping whatever this site recorded for them.
 
 const crypto = require('crypto');
 
@@ -30,45 +44,56 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
   const base = String(url).replace(/\/+$/, '');
   const headers = { Authorization: `Bearer ${key}` };
 
-  // token hash -> { person, at }
+  // token hash -> { answer: { person, unverified }, at }
   const cache = new Map();
   // How long a cached answer may stand in while the account service
   // can't be reached, before this gives up and says so (503).
   const STALE_OK_MS = 15 * 60 * 1000;
 
+  // { token, bearer }: the visitor's session token, from a bearer header
+  // or else the cookie. A bearer header that isn't a session token means
+  // nobody (it doesn't fall back to the cookie: what the caller sent is
+  // what counts). Other Authorization schemes are left alone.
   function readToken(req) {
+    const auth = /^Bearer\s+(.*)$/i.exec(String(req.headers.authorization || '').trim());
+    if (auth) return { token: TOKEN_RE.test(auth[1]) ? auth[1] : null, bearer: true };
     const pair = String(req.headers.cookie || '')
       .split(';')
       .map((p) => p.trim())
       .find((p) => p.startsWith(COOKIE + '='));
     const token = pair && pair.slice(COOKIE.length + 1);
-    return token && TOKEN_RE.test(token) ? token : null;
+    return { token: token && TOKEN_RE.test(token) ? token : null, bearer: false };
   }
 
-  async function lookup(req, res) {
-    const token = readToken(req);
-    if (!token) return null;
+  const NOBODY = { person: null, unverified: false };
+
+  // { person, unverified } for this request.
+  async function whoIs(req, res) {
+    const { token, bearer } = readToken(req);
+    if (!token) return NOBODY;
     const id = crypto.createHash('sha256').update(token).digest('hex');
     const hit = cache.get(id);
-    if (hit && Date.now() - hit.at < cacheMs) return hit.person;
+    if (hit && Date.now() - hit.at < cacheMs) return hit.answer;
     let body;
     try {
-      const r = await fetch(`${base}/api/session`, {
-        headers: { ...headers, 'X-Canopy-Session': token, 'X-Canopy-Site-Host': req.hostname || '' }
-      });
+      const h = { ...headers, 'X-Canopy-Session': token };
+      // Only a cookie gets renewed, so only a cookie says where it lives.
+      if (!bearer) h['X-Canopy-Site-Host'] = req.hostname || '';
+      const r = await fetch(`${base}/api/session`, { headers: h });
       if (!r.ok) throw new Error(`account service answered ${r.status}`);
       body = await r.json();
     } catch (err) {
-      if (hit && Date.now() - hit.at < STALE_OK_MS) return hit.person;
+      if (hit && Date.now() - hit.at < STALE_OK_MS) return hit.answer;
       err.canopyUnreachable = true;
       throw err;
     }
     // The cookie's year is renewed from here as well as from the account
     // service itself, so someone who only ever visits this site stays in.
-    if (body.renewCookie) res.append('Set-Cookie', body.renewCookie);
+    if (body.renewCookie && !bearer) res.append('Set-Cookie', body.renewCookie);
+    const answer = { person: body.person || null, unverified: !body.person && !!body.unverified };
     if (cache.size > 5000) cache.clear();
-    cache.set(id, { person: body.person || null, at: Date.now() });
-    return body.person || null;
+    cache.set(id, { answer, at: Date.now() });
+    return answer;
   }
 
   function hereUrl(req) {
@@ -81,6 +106,18 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
     return `${base}/?return=${encodeURIComponent(returnTo || hereUrl(req))}`;
   }
 
+  // The quick sign-up (name, email, passkey; no code), and back to
+  // `returnTo`. Only worth linking from a site that allows unverified
+  // accounts: anywhere else the account it makes counts as signed out.
+  function quickSignUpUrl(req, returnTo) {
+    return `${base}/?quick=1&return=${encodeURIComponent(returnTo || hereUrl(req))}`;
+  }
+
+  // Where someone proves their email (a code), and back to `returnTo`.
+  function verifyUrl(req, returnTo) {
+    return `${base}/profile?verify=1&return=${encodeURIComponent(returnTo || hereUrl(req))}`;
+  }
+
   // Signs out of every Canopy site, then back to `returnTo`.
   function signOutUrl(req, returnTo) {
     return `${base}/signout?return=${encodeURIComponent(returnTo || `${req.protocol}://${req.get('host')}/`)}`;
@@ -91,10 +128,18 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
     res.status(503).send('Canopy accounts could not be reached. Try again in a minute.');
   }
 
-  // Puts req.person on every request: the signed-in visitor, or null.
+  async function settle(req, res) {
+    const { person, unverified } = await whoIs(req, res);
+    req.person = person;
+    req.canopyUnverified = unverified;
+  }
+
+  // Puts req.person on every request (the signed-in visitor, or null), and
+  // req.canopyUnverified (true for someone signed in whose email this site
+  // needs proven first).
   async function attach(req, res, next) {
     try {
-      req.person = await lookup(req, res);
+      await settle(req, res);
       next();
     } catch (err) {
       if (err.canopyUnreachable) return unreachable(res, err);
@@ -102,19 +147,26 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
     }
   }
 
-  // Signed in, or: a page is sent to sign in (and back), an API call gets
-  // a 401. Works with or without attach before it.
+  // Signed in, or: a page is sent to sign in (or, for someone whose email
+  // isn't proven, to prove it) and back; an API call gets a 401 (or a 403
+  // with reason "email_unverified"). Works with or without attach before
+  // it.
   async function requireSignIn(req, res, next) {
     try {
-      if (req.person === undefined) req.person = await lookup(req, res);
+      if (req.person === undefined) await settle(req, res);
     } catch (err) {
       if (err.canopyUnreachable) return unreachable(res, err);
       return next(err);
     }
     if (req.person) return next();
     const wantsPage = req.method === 'GET' && String(req.get('accept') || '').includes('text/html');
+    const backTo = req.get('referer') || undefined;
+    if (req.canopyUnverified) {
+      if (wantsPage) return res.redirect(verifyUrl(req));
+      return res.status(403).json({ error: 'confirm your email first', reason: 'email_unverified', verify: verifyUrl(req, backTo) });
+    }
     if (wantsPage) return res.redirect(signInUrl(req));
-    res.status(401).json({ error: 'unauthorized', signIn: signInUrl(req, req.get('referer') || undefined) });
+    res.status(401).json({ error: 'unauthorized', signIn: signInUrl(req, backTo) });
   }
 
   // Names and photos for other people, as a Map of id -> { id, firstName,
@@ -131,5 +183,5 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
     return found;
   }
 
-  return { attach, requireSignIn, people, signInUrl, signOutUrl };
+  return { attach, requireSignIn, people, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl };
 };

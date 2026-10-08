@@ -10,6 +10,11 @@ is this**, **what's their name and photo**, and **are they signed in**.
   an optional Venmo username, and a passkey. An email that already has
   an account goes on to make a new passkey on this phone. That's what a
   lost or new phone does, and nobody has to ask the admin for it.
+- At **`/?quick=1`**, the **quick sign-up**, someone new gives their
+  first and last name and email and makes a passkey, with no code and no
+  photo. The account is **unverified** until they prove the email with a
+  code, and only sites the admin marks as allowing it treat them as
+  signed in until then (see "Quick sign-up").
 - At **`/profile`** they change their name, photo, phone, Instagram,
   Venmo and Cash App, see their passkeys (add one, remove one they've
   lost) and sign out. **Changing their email** takes three steps: their
@@ -18,15 +23,20 @@ is this**, **what's their name and photo**, and **are they signed in**.
   to the new address and typed back, and then a notice to the old
   address with the new one masked (`a•••@domain`), the only warning its
   owner gets if it wasn't them. A new address that already has an
-  account just "can't be used". The admin lands on the Account Manager
+  account just "can't be used". An unverified account gets a banner that
+  can't be closed, with **Confirm email** (a code sent there, typed
+  back). `/profile?verify=1&return=…` opens straight into that and goes
+  back afterwards. The admin lands on the Account Manager
   after signing in, with **My Profile** to their own and **Back to
   manager** from it.
 - At **`/admin`**, the **Account Manager**, the admin sees everyone (the
-  admin first, then by name) and can **Edit profile** (every field above
-  except the photo, plus the email: a changed email counts as unconfirmed
-  until its owner next gets a code there), reset passkeys, send a setup
-  link or delete; the **Sites** allowed to ask about people; and the
-  sign-in page's logo and backdrop (each can be removed again).
+  admin first, then by name, with an **Unverified** badge on anyone whose
+  email isn't proven) and can **Edit profile** (every field above except
+  the photo, plus the email: a changed email is unverified until its
+  owner types a code sent there), reset passkeys, send a setup link or
+  delete; the **Sites** allowed to ask about people, each with a switch
+  for whether it **allows quick (unverified) accounts**; and the sign-in
+  page's logo and backdrop (each can be removed again).
 - Every Canopy site asks it, server to server, who the visitor is
   (`GET /api/session`) and what other people are called
   (`GET /api/people`). `client/canopy-account.js` is the one file a site
@@ -125,6 +135,14 @@ code, account or not. The page says nothing about whether an account
 exists until the code has been typed, so it can't be used to find out
 who has an account here.
 
+**The quick sign-up doesn't hold to that.** It sends no code, so when an
+email already has an account (verified or not) the only honest answers
+are to say so or to fail without a reason. It says so: "this email has
+an account, sign in instead". That tells anyone who tries an email
+whether it has a Canopy account. We accept that leak in exchange for a
+sign-up with no code. The tries are counted and limited (see "Guess
+limits"), so it can't be run down a long list of emails.
+
 - A code is good for **10 minutes** and **5 wrong tries**, after which
   only a new code works. Sending a new one replaces the old one on that
   browser. Only a hash of the code is stored, salted with the browser's
@@ -139,10 +157,82 @@ who has an account here.
   account, on this phone. That covers a new phone, a lost phone, a
   browser that doesn't sync, and anyone whose passkeys the admin reset. It's self-serve on purpose: whoever can read the
   account's email can get in, and the admin doesn't have to be awake.
+  It also proves the email, so an unverified account becomes verified
+  (see "Proving the email").
 
 That last point is the real security boundary. **An account is exactly
 as safe as its email inbox**, plus the odds of guessing a 6-digit code
 inside the limits below. Those odds are worked out under "Guess limits".
+
+### Quick sign-up
+
+For someone opening a link from a site that allows it (events), who has
+never used Canopy. Sites link to `/?quick=1&return=…`
+(`canopy.quickSignUpUrl()`). The page asks for first name, last name
+and email, then the phone offers to save a passkey, and they're back at
+`?return=`. There's no code and no photo. Under the form, "Already have a
+Canopy account? Sign in" goes to the usual page.
+
+- **The passkey is still required.** The account is made only once the
+  passkey verifies, the same as every other sign-up, so there's never an
+  account nobody can get into.
+- **An email that already has an account**, verified or not, is told so,
+  with **Sign in with passkey** and **Email me a code** (the usual code
+  flow, already filled in). That's the accepted leak above.
+- **The account is unverified** (`email_verified_at` is null) until its
+  owner proves the email with a code. Until then it's signed in only on
+  sites the admin has marked **Allows quick (unverified) accounts**.
+  Every other site sees `{"person": null, "unverified": true}` and sends
+  them to prove it (see "For Canopy sites"). That's decided here, from
+  the site's key, and never trusted to the site.
+- Unverified people can still use their own profile here. They can never
+  open `/admin`.
+- It only works once there's an admin.
+- The usual page at `/` doesn't link to it. It already makes accounts,
+  with a code, and pointing people from there to a weaker account would
+  only make more unverified ones. Sites that want quick sign-ups link to
+  `?quick=1` themselves.
+
+### Proving the email
+
+An account's email is proven when someone types a code sent to it. That
+happens three ways, and each one marks the account verified:
+
+- **Confirm email on the profile.** An unverified account's profile has
+  a banner that can't be closed. **Confirm email** sends a code to the
+  account's own address, and typing it back marks it verified. Sites send
+  people to `/profile?verify=1&return=…` (`canopy.verifyUrl()`), which
+  opens straight into it and goes back to `return` afterwards (straight
+  back, if they're already verified). Signed out, they sign in first and
+  come back to it. It uses the same codes and the same limits as signing
+  in.
+- **Signing in by code** ("an email with an account" above).
+- **Changing their email** from the profile. The new address is proven
+  by its code, so the account ends up verified whether it was before or
+  not.
+
+**Signing in by code takes an unverified account over.** Anyone can make
+a quick sign-up with someone else's email, keep the passkey, and wait.
+If the real owner later signs in by code and gets a new passkey added
+next to the squatter's, the squatter would be in a verified account,
+reading whatever the owner puts in it. So when a code proves the email
+of an account that wasn't verified, every passkey it had is removed and
+every other browser is signed out, and the inbox's owner is left with
+the only passkey. The page says so before they make it. The cost falls
+on a real quick sign-up who signs in by code on a second device instead
+of using their passkey: their first phone is signed out and needs a code
+too. Confirming from the profile doesn't do this, because that's someone
+already signed in to the account.
+
+**An email the admin changes is unverified** until its owner types a code
+sent there. The admin can't vouch for an address on someone's behalf, and
+an address typed by someone else is exactly the one that hasn't been
+shown to work. Until then sites that don't allow unverified accounts see
+them as signed out, and their profile asks them to confirm it. The
+admin's own email isn't changed from Edit profile (`409`, `"reason":
+"own_email"`): that would leave the admin unverified and shut out of
+`/admin`. They change it from their own profile, with a passkey and a
+code, like anyone.
 
 ### Setup links
 
@@ -299,8 +389,26 @@ trusted for this.
 | Wrong codes | 10 per email per 15 min | 40 per 15 min | 300 per hour |
 | Wrong setup password | 8 per browser per 15 min | 40 per 15 min | 100 per hour |
 | Unknown setup links | | 40 per 15 min | |
+| Quick sign-up tries | 10 per browser per 15 min | 20 per hour | 200 per hour |
+| Quick accounts made | | 10 per hour | 50 per hour |
 
 On top of that, each code dies after 5 wrong tries.
+
+**Why those numbers for quick sign-ups.** No email goes out, so neither
+the inbox nor iCloud's daily limit holds them back. Each try answers
+"does this email have an account?", so every try counts, including the
+ones that hit an account. 20 tries an hour per address is plenty for a
+household or a party on one wifi, and too slow to check a list of emails.
+The 200-an-hour ceiling is the backstop for an attacker with many
+addresses. It tops out near 5,000 checked emails a day, and an email
+can't be guessed the way a phone number can, so they'd need the list
+first. Accounts actually made are capped harder: 10 per address and 50
+across everyone an hour. A link shared to a big group chat makes a few
+dozen in an evening, not 50 in an hour, and junk accounts made faster
+than that are what the cap is for. Unverified accounts work only on the
+sites that allow them, so a junk one can do little. When the ceiling
+trips, quick sign-ups stop for everyone for that hour, and the page
+points them to signing up with an email and a code, which isn't affected.
 
 **What that means for one account.** With 5 codes an hour and 5 tries on
 each, someone going after one email gets **at most 25 guesses an hour**,
@@ -331,7 +439,9 @@ Coolify's internal network). Each site has its own key, made in the
 admin's **Sites** tab. The key is shown once, when it's made. **New key**
 replaces it (the old one stops working right away), and **Cut off**
 stops that site and no other. A site that's been cut off gets back in by
-being given a new key.
+being given a new key. Each site also has the switch **Allows quick
+(unverified) accounts**, off unless the admin turns it on (see "Quick
+sign-up").
 
 ### `GET /api/session`: who's visiting
 
@@ -354,6 +464,7 @@ Signed in:
   "person": {
     "id": "6f1c2b9e-4d0a-4a53-9a51-2f7e0c1d8b44",
     "email": "ana@example.com",
+    "emailVerified": true,
     "firstName": "Ana",
     "lastName": "Lima",
     "shortName": "Ana L",
@@ -371,9 +482,32 @@ Not signed in (no cookie, an unknown one, or signed out): `{"person":
 null}`. A missing, wrong or cut-off key: `401 {"error": "unknown or
 revoked site key"}`.
 
+**Unverified people** (a quick sign-up, or an email the admin changed,
+not yet proven by a code). On a site that **allows** them, `person` is
+there as above with `"emailVerified": false`. On a site that doesn't,
+they aren't signed in there:
+
+```json
+{ "person": null, "unverified": true }
+```
+
+The site sends them to `verifyUrl` (`/profile?verify=1&return=…`) rather
+than to sign in again. Their session is real, so it's kept alive and its
+cookie renewed as usual (`renewCookie` can come with this answer too).
+The moment they prove the email, every site sees them on its next ask.
+
 `renewCookie` is only there when the cookie is due for its daily
-renewal. The site sends it back to the visitor as a `Set-Cookie`,
-unchanged. `X-Canopy-Site-Host` is how it gets the right `Domain`.
+renewal, and only when the request says `X-Canopy-Site-Host`. The site
+sends it back to the visitor as a `Set-Cookie`, unchanged.
+`X-Canopy-Site-Host` is how it gets the right `Domain`. A request
+without it (an app's bearer token, below) never gets one: there's no
+cookie to renew.
+
+`X-Canopy-Session` is the same 43-character value whether it came from
+the visitor's cookie or from an app's `Authorization: Bearer` header. A
+native app will get one from a sign-in flow for apps, **which doesn't
+exist yet**. It comes later, here. Until then sites only have to accept
+the header, which `client/canopy-account.js` does.
 `photoUrl` is `null` for someone with no photo, and `venmo`, `phone`,
 `instagram` and `cashapp` are each `null` when there isn't one. They're
 all set on the profile page. `phone` is E.164 (`+` and the country code;
@@ -406,7 +540,8 @@ Authorization: Bearer cnp_8vD...
 }
 ```
 
-Other people come without their email or Venmo. **An id that's missing
+Other people come without their email, phone, Instagram, Venmo or Cash
+App, and without whether their email is proven. **An id that's missing
 from the answer is a deleted account**: the site shows them as a former
 member and keeps whatever it recorded for them.
 
@@ -428,7 +563,9 @@ app.set('trust proxy', true);
 app.use(canopy.attach);                         // req.person: the visitor, or null
 app.get('/mine', canopy.requireSignIn, ...);    // signed in, or off to sign in and back
 const people = await canopy.people(ids);        // Map of id -> { firstName, shortName, photoUrl, ... }
-// canopy.signInUrl(req, returnTo), canopy.signOutUrl(req, returnTo) for links
+// For links, each coming back to returnTo (this page by default):
+// canopy.signInUrl(req, returnTo), canopy.signOutUrl(req, returnTo),
+// canopy.quickSignUpUrl(req, returnTo), canopy.verifyUrl(req, returnTo)
 ```
 
 - **`app.set('trust proxy', true)` is required.** Coolify (and Cloudflare)
@@ -437,17 +574,33 @@ const people = await canopy.people(ids);        // Map of id -> { firstName, sho
   says `http://tickets.canopysf.com/...`, this service refuses to return
   to an http address, and people land on their profile instead of where
   they were. It also reads the right host for the renewed cookie.
-- `attach` puts `req.person` on every request. `requireSignIn` sends a
-  page (a GET asking for HTML) to the sign-in page and back, and answers
-  anything else with a 401 and a `signIn` URL. It works with or without
+- `attach` puts `req.person` on every request, and
+  `req.canopyUnverified`: `true` for someone signed in whose email this
+  site needs proven first (`req.person` is then `null`). `requireSignIn`
+  sends a page (a GET asking for HTML) to the sign-in page and back, and
+  answers anything else with a 401 and a `signIn` URL. For an unverified
+  visitor it sends a page to `verifyUrl` instead, and answers anything
+  else with `403 {"error": "confirm your email first", "reason":
+  "email_unverified", "verify": "<verifyUrl>"}`. It works with or without
   `attach` before it.
-- `attach` passes `renewCookie` on to the visitor by itself.
+- **Bearer tokens.** Both also take `Authorization: Bearer <token>`, the
+  token being a `canopy_session` value (43 characters, base64url), for
+  native apps. It's looked up through `/api/session` the same way as the
+  cookie. When a request has both, the bearer wins. A `Bearer` header
+  that isn't shaped like a token means nobody (it doesn't fall back to
+  the cookie); other schemes (`Basic`) are ignored. There's no sign-in
+  for apps yet to hand one out (see above).
+- `attach` passes `renewCookie` on to the visitor by itself, for a cookie
+  only. Nothing is ever sent back as `Set-Cookie` for a bearer request.
+- `quickSignUpUrl` is only worth linking from a site that allows
+  unverified accounts. Anywhere else the account it makes counts as
+  signed out until it's verified.
 - **Each visitor's answer is cached for 60 seconds** (`cacheMs`). So a
-  sign-out, a rename or a new photo can take up to a minute to show on a
-  site. If this service can't be reached, a cached answer up to 15
-  minutes old stands in. Past that, the site answers 503 "Canopy
-  accounts could not be reached". `people()` isn't cached: call it once
-  per request.
+  sign-out, a rename, a new photo or a newly confirmed email can take up
+  to a minute to show on a site. If this service can't be reached, a
+  cached answer up to 15 minutes old stands in. Past that, the site
+  answers 503 "Canopy accounts could not be reached". `people()` isn't
+  cached: call it once per request.
 - **Photos load straight from `account.canopysf.com`.** Put `photoUrl` in
   an `<img>` on any Canopy page and it works. A photo is only served to a
   browser signed in to some Canopy account (everyone else gets a 404),
@@ -607,9 +760,14 @@ Everything is in `DATA_DIR` (`/app/data` in the container):
 - `backups/sqlite/account-YYYY-MM-DD.db` holds the snapshots.
 
 **Schema version.** A new `account.db` is made with the whole current
-schema (version 1, in SQLite's `user_version`). One at any other version
-is refused at startup rather than opened with columns this code doesn't
-know about. Future upgrades go in `UPGRADES` in `lib/db.js`.
+schema (`SCHEMA_VERSION` in `lib/db.js`, kept in SQLite's
+`user_version`). An older one is brought up to date at startup, one step
+at a time, by `UPGRADES` in `lib/db.js`, inside one transaction. One from
+newer code is refused rather than opened with columns this code doesn't
+know about. Version 5 added quick sign-ups: everyone already in the
+database counts as verified (including anyone whose email the admin had
+changed, which until then changed nothing), and every site starts with
+unverified accounts not allowed.
 
 **Backups.** Two layers, the same as tickets:
 
