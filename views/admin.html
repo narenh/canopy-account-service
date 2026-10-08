@@ -527,6 +527,7 @@ function siteCalendar(a){
   input.autocapitalize = 'off';
   input.spellcheck = false;
   input.placeholder = t('admin.calendarUrl');
+  input.setAttribute('aria-label', t('admin.calendarUrl'));
   input.value = a.calendarUrl || '';
   const save = document.createElement('button');
   save.type = 'submit';
