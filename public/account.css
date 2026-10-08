@@ -60,12 +60,19 @@ body.centered{display:flex;align-items:center;justify-content:center;}
   --mesh-grain: 0.07; /* 0 to disable grain */
   position: relative;
   min-height: 100vh;
-  min-height: 100dvh;
+  min-height: 100svh;
   background-color: var(--mesh-base);
   isolation: isolate;
 }
+/* The layers are the height of the screen with Safari's toolbars gone
+   (100lvh), pinned to the top, not inset:0. A fixed inset:0 box follows
+   the *visible* area, which grows and shrinks as the toolbars collapse
+   while scrolling, so the glows (placed in percentages of it) slid up and
+   down. Sized like this the toolbars only cover or uncover the bottom
+   edge. The page's min-height is 100svh for the same reason: never dvh,
+   which is the moving height. (Events found this first; same fix.) */
 .mesh-bg:not(.has-backdrop)::before {
-  content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  content: ""; position: fixed; top: 0; left: 0; right: 0; height: 100vh; height: 100lvh; z-index: -2; pointer-events: none;
   background-color: var(--mesh-base);
   background-image:
     radial-gradient(at 12% 18%, var(--mesh-1) 0, transparent 50%),
@@ -75,7 +82,7 @@ body.centered{display:flex;align-items:center;justify-content:center;}
     radial-gradient(at 50% 45%, var(--mesh-5) 0, transparent 60%);
 }
 .mesh-bg:not(.has-backdrop)::after {
-  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  content: ""; position: fixed; top: 0; left: 0; right: 0; height: 100vh; height: 100lvh; z-index: -1; pointer-events: none;
   opacity: var(--mesh-grain); mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
