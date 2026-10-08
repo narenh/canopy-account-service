@@ -1,12 +1,13 @@
 // Runs the real server in a child process on a scratch DATA_DIR, and
-// browser-ish clients that keep their own cookie and send an Origin.
+// browser-ish clients that keep their own cookie and send an Origin, and
+// app-ish ones that keep a bearer token and send neither.
 
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
-const { createAuthenticator } = require('./softAuthenticator');
+const { createAuthenticator, IOS_ORIGIN } = require('./softAuthenticator');
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -130,4 +131,81 @@ function browser(server, { origin } = {}) {
   };
 }
 
-module.exports = { startServer, browser };
+// A native app: no cookie and no Origin, a bearer token (the ceremony
+// while signing in, then the token it's given), and its own passkeys,
+// which sign as `origin` (the iOS app's, unless told otherwise). Paths are
+// under /api/native/v1. Any answer with a `token` in it is kept.
+function nativeApp(server, { origin = IOS_ORIGIN, platform = 'ios', app = 'Canopy Events', device = 'iPhone' } = {}) {
+  let token = null;
+  const authenticator = createAuthenticator();
+
+  async function request(method, url, { body, headers = {}, form, bearer } = {}) {
+    const h = { ...headers };
+    const sent = bearer !== undefined ? bearer : token;
+    if (sent) h.Authorization = `Bearer ${sent}`;
+    let payload;
+    if (form) payload = form;
+    else if (body !== undefined) { h['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
+    const res = await fetch(server.base + '/api/native/v1' + url, { method, headers: h, body: payload, redirect: 'manual' });
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (e) {}
+    if (data && typeof data.token === 'string') token = data.token;
+    return { status: res.status, data, text, headers: res.headers };
+  }
+
+  return {
+    authenticator,
+    origin,
+    get token() { return token; },
+    set token(v) { token = v; },
+    get: (url, opts) => request('GET', url, opts),
+    post: (url, body, opts) => request('POST', url, { ...opts, body: body === undefined ? {} : body }),
+    patch: (url, body, opts) => request('PATCH', url, { ...opts, body }),
+    del: (url, opts) => request('DELETE', url, opts),
+    upload: (url, form, opts) => request('POST', url, { ...opts, form }),
+
+    // A fresh ceremony, which becomes the bearer token.
+    async begin(opts) {
+      const r = await this.post('/auth/begin', { platform, app, device }, opts);
+      if (r.status === 201) token = r.data.ceremony;
+      return r;
+    },
+
+    async makePasskey(optionsRes, path = '/auth/register/verify', opts) {
+      const response = authenticator.register(optionsRes.data.options, origin);
+      return this.post(path, { response }, opts);
+    },
+
+    async signInWithPasskey(credId, opts) {
+      await this.begin(opts);
+      const start = await this.post('/auth/passkey/options', {}, opts);
+      const response = authenticator.authenticate(start.data.options, origin, credId);
+      return this.post('/auth/passkey/verify', { response }, opts);
+    },
+
+    async proveEmail(email, opts) {
+      await this.begin(opts);
+      const start = await this.post('/auth/email/start', { email }, opts);
+      if (start.status !== 200) return start;
+      return this.post('/auth/email/verify', { code: server.lastCode(email) }, opts);
+    },
+
+    async signUp(email, firstName, lastName, opts) {
+      const proven = await this.proveEmail(email, opts);
+      if (proven.status !== 200 || proven.data.state !== 'new') throw new Error('expected a new email: ' + proven.text);
+      const made = await this.post('/auth/register/new', { firstName, lastName }, opts);
+      if (made.status !== 200) throw new Error('register/new failed: ' + made.text);
+      return this.makePasskey(made, '/auth/register/verify', opts);
+    },
+
+    async quickSignUp(email, firstName, lastName, opts) {
+      await this.begin(opts);
+      const start = await this.post('/auth/quick/start', { email, firstName, lastName }, opts);
+      if (start.status !== 200) return start;
+      return this.makePasskey(start, '/auth/register/verify', opts);
+    }
+  };
+}
+
+module.exports = { startServer, browser, nativeApp };

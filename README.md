@@ -42,6 +42,9 @@ is this**, **what's their name and photo**, and **are they signed in**.
   for whether it **allows quick (unverified) accounts** and whether it
   **can find people by phone number or Instagram**; and the sign-in
   page's logo and backdrop (each can be removed again).
+- The **iOS and Android apps** sign in through `/api/native/v1`, with
+  the same passkeys, codes and quick sign-up, and get a token to send as
+  `Authorization: Bearer` (see "Apps").
 - Every Canopy site asks it, server to server, who the visitor is
   (`GET /api/session`), what other people are called
   (`GET /api/people`), and, if it's allowed to, who has a phone number or
@@ -55,7 +58,8 @@ subdomain. Signing out signs you out of all of them, for the same reason.
 **What this isn't.** It isn't an OAuth / OpenID Connect provider. There
 are no redirect dances, no tokens handed to other domains, no consent
 screens. It only works for sites under `canopysf.com`, because it relies
-on the browser sharing one cookie between them. There are no passwords
+on the browser sharing one cookie between them. (The apps get a token,
+but it's the same session a cookie names, for Canopy's own apps only.) There are no passwords
 for anyone (the one setup password is for the admin and the server, see
 "The first admin"). The only emails it sends are sign-in codes and, when
 someone changes their email, a notice to the old address. It doesn't
@@ -66,7 +70,8 @@ feeds stay in tickets, keyed by the person ids from here.
 
 - `server.js` is the Express app, every route in one file: sign-in and
   sign-up, the first admin and recovery, signing out, the profile,
-  photos, the admin's JSON, the site API, and the pages. It also has the
+  photos, the apps' routes (the same handlers again, under
+  `/api/native/v1`), the admin's JSON, the site API, and the pages. It also has the
   two checks every request goes through, the response headers (no
   framing, no MIME sniffing, no full URLs in `Referer`) and the Origin
   check (below), and it holds the guess limits with their exact numbers.
@@ -79,9 +84,12 @@ feeds stay in tickets, keyed by the person ids from here.
   the daily snapshots (see "Storage & backups").
 - `lib/session.js` is the `canopy_session` cookie: reading it, the
   `Set-Cookie` that makes or renews it, and when it's due for renewal.
+  It also reads an app's `Authorization: Bearer` token, and names a
+  browser from its `User-Agent`.
 - `lib/domain.js` is the one answer to "is this a Canopy address?": who
   may make changes here (the Origin check), where `?return=` may send
-  someone, the cookie's `Domain`, and which domain passkeys belong to.
+  someone, the cookie's `Domain`, which domain passkeys belong to, and
+  which apps may use them (`ANDROID_APK_KEY_HASHES`).
 - `lib/limits.js` holds the in-memory try counters behind the guess
   limits, and `clientIp()`, the visitor's address (Cloudflare's
   `CF-Connecting-IP` when it's there).
@@ -92,7 +100,9 @@ feeds stay in tickets, keyed by the person ids from here.
 - `lib/photoStore.js` stores profile photos, one square JPEG per person
   in `DATA_DIR/photos/<id>.jpg`. The browser has already cropped and
   shrunk it (`public/photo-crop.js`), so what's on disk is small and
-  carries none of the original's EXIF, location included.
+  carries none of the original's EXIF, location included. An app crops
+  its own, so every JPEG's metadata is also taken out here before it's
+  saved (`withoutMetadata`).
 - `lib/uploadedImage.js` stores the admin's uploaded logo and sign-in
   backdrop as files in `DATA_DIR`.
 - `client/canopy-account.js` is the file Canopy sites copy in (see "For
@@ -110,7 +120,8 @@ feeds stay in tickets, keyed by the person ids from here.
 - `test/` uses `node:test`. Each file starts the real server in a child
   process on a scratch `DATA_DIR`. `test/softAuthenticator.js` is a
   software passkey, so the real `@simplewebauthn/server` checks run end
-  to end with no browser. `npm test` runs them all.
+  to end with no browser, and it signs as a page or as the iOS or
+  Android app. `npm test` runs them all.
 
 `GET /healthz` answers `{"ok":true}`, and `GET /favicon.ico` answers an
 empty 204, so pages don't log a 404 for the icon they don't have.
@@ -355,6 +366,69 @@ because every Canopy site is ours, but it means a Canopy site has to be
 trusted with sessions. A subdomain you wouldn't trust with that
 shouldn't live under `canopysf.com`.
 
+## Apps
+
+The iOS and Android apps (Canopy Events first) sign in here, with the
+same passkeys, emailed codes and quick sign-up as the web, and come away
+with a **token**: a `canopy_session` value, exactly like a browser's
+cookie, which the app keeps in the Keychain (iOS) or the Keystore
+(Android) and sends as `Authorization: Bearer <token>`, both to Canopy
+sites (which pass it to `/api/session` as they would a cookie) and to
+this service. `docs/native-api.md` walks app developers through every
+step, and `openapi.yaml` (served at `/api/native/v1/openapi.yaml`) is the
+contract.
+
+- **Everything is under `/api/native/v1`, and every step is the web's
+  own code.** The route handlers for signing in, signing up, the profile,
+  passkeys, changing and proving the email, and where you're signed in
+  are mounted a second time there. So the rules are the web's by
+  construction rather than by copy: the takeover of an unverified
+  account, the reauth before an email change, the last passkey that
+  can't be removed. So are the limits: the same counters, so an email's
+  5 codes an hour are 5 whether they were asked for in a browser, an
+  app, or both.
+- **A sign-in with no cookie.** A browser keeps a sign-in that's under
+  way on its session row (the challenge, the emailed code, the proven
+  email), found by its cookie. An app starts with `POST auth/begin`,
+  which makes a fresh session row that isn't signed in and answers its
+  token as `ceremony`. The app sends that as its bearer token at each
+  step. The step that signs in (a passkey, or the passkey that finishes
+  a sign-up) signs that row in under a **new** token, as a browser's is,
+  and answers it as `token`; the ceremony value is worthless from then
+  on. A ceremony nobody finishes runs out in a day, like a browser's
+  abandoned sign-in.
+- **The token is a session like any other.** It's one row in `sessions`,
+  stored as its hash, good for a year from when it was last used. Any use
+  keeps it alive: the app's own calls here, or a site's `/api/session`
+  with it. There's no renewing to do, since there's no cookie whose
+  `Max-Age` runs out, so a bearer answer from `/api/session` never has a
+  `renewCookie`. Whatever ends a session ends it: **Sign out** in the app
+  (`POST signout`), the profile's list of where you're signed in, **Sign
+  out everywhere**, the admin's reset and delete, and the takeover rule.
+- **One per app install.** An app that's signed in signs out before it
+  signs in again: a sign-in step sent with a signed-in token is refused
+  (`409 signed_in`), so a token is never turned into someone else's.
+- **What the app is called.** `auth/begin` takes `platform` (`ios` or
+  `android`), and optionally `app` and `device`, which make the name in
+  the person's list ("Canopy Events on iPhone").
+- **Photos.** `GET /photo/<id>` (every `photoUrl`) takes the bearer token
+  as well as the cookie, so the apps can show photos too. A bearer header
+  decides alone: a malformed or unknown one is nobody, whatever cookie
+  came with it. An app's upload has to be a JPEG, and its metadata is
+  taken out before it's saved (see "How it works").
+- **Passkeys from the apps.** The phone signs each passkey use with
+  where it happened. The iOS app's is `https://canopysf.com` (the
+  passkey domain), and an Android app's is `android:apk-key-hash:` and
+  the hash of the certificate the app was signed with. The app routes
+  accept those as well as Canopy pages; the web's routes still only
+  accept Canopy pages. Android apps are trusted by listing their hashes
+  in `ANDROID_APK_KEY_HASHES`, and none is until one is. Both platforms
+  also need a file on `canopysf.com` saying the app may use its passkeys
+  (see "The association files").
+- **Not in the apps:** the admin, the setup password, recovery and setup
+  links. Those stay on the web. An app can't sign anyone in until there's
+  an admin (`403 setup_required`).
+
 ## The Origin check
 
 Every request that changes something (anything but GET, HEAD or OPTIONS)
@@ -374,6 +448,31 @@ with the cookie.
 
 The check is about browsers. Something that isn't a browser can send
 any `Origin` it likes, but it doesn't have anyone's cookie either.
+
+**The apps skip it, and why that's safe.** A native app sends no
+`Origin`. A forged request is a page on another site getting a visitor's
+browser to send something with the credentials the browser attaches by
+itself, which here is the cookie. The app routes (`/api/native/v1`) never
+read the cookie: they authenticate only by `Authorization: Bearer`, and
+a request with a bearer header is about that header alone, never falling
+back to the cookie, even when one came along. A browser never attaches
+that header by itself, and a page on another site can't set it without
+asking the server first (a CORS preflight), which this service never
+says yes to for these routes. So:
+
+- A request to `/api/native/v1` that carries `Authorization: Bearer`
+  skips the Origin check, whatever its `Origin` says.
+- So does `POST /api/native/v1/auth/begin`, the one step before there's
+  a token, when its body is JSON: a page elsewhere can't send JSON there
+  without the same preflight either. All it does is make an empty,
+  signed-out session row.
+- Nothing else does. A cookie with no bearer header still needs a
+  Canopy `Origin` everywhere, app routes included (where it's then
+  ignored anyway), and a bearer header on a web route changes nothing.
+
+The bearer token is only as safe as the place the app keeps it, the same
+way the cookie is only as safe as the browser. That's why it goes in the
+Keychain or Keystore, never in plain preferences or logs.
 
 **One known, accepted gap: `GET /signout`.** Sites need a plain link to
 put behind their "Sign out", and a link is a GET with no `Origin`. So
@@ -528,10 +627,9 @@ without it (an app's bearer token, below) never gets one: there's no
 cookie to renew.
 
 `X-Canopy-Session` is the same 43-character value whether it came from
-the visitor's cookie or from an app's `Authorization: Bearer` header. A
-native app will get one from a sign-in flow for apps, **which doesn't
-exist yet**. It comes later, here. Until then sites only have to accept
-the header, which `client/canopy-account.js` does.
+the visitor's cookie or from an app's `Authorization: Bearer` header.
+Apps get one by signing in through `/api/native/v1` (see "Apps"). Sites
+only have to accept the header, which `client/canopy-account.js` does.
 `photoUrl` is `null` for someone with no photo, and `venmo`, `phone`,
 `instagram` and `cashapp` are each `null` when there isn't one. They're
 all set on the profile page. `phone` is E.164 (`+` and the country code;
@@ -652,8 +750,8 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
   native apps. It's looked up through `/api/session` the same way as the
   cookie. When a request has both, the bearer wins. A `Bearer` header
   that isn't shaped like a token means nobody (it doesn't fall back to
-  the cookie); other schemes (`Basic`) are ignored. There's no sign-in
-  for apps yet to hand one out (see above).
+  the cookie); other schemes (`Basic`) are ignored. Apps get their token
+  from this service (see "Apps").
 - `attach` passes `renewCookie` on to the visitor by itself, for a cookie
   only. Nothing is ever sent back as `Set-Cookie` for a bearer request.
 - `lookup(req, { phone } | { instagram })` resolves to the one person
@@ -678,7 +776,8 @@ const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { in
   an `<img>` on any Canopy page and it works. A photo is only served to a
   browser signed in to some Canopy account (everyone else gets a 404),
   and an `<img>` on a Canopy subdomain carries the cookie because the
-  browser counts it as the same site. The site never has to fetch or
+  browser counts it as the same site. An app loads the same URL with its
+  bearer token. The site never has to fetch or
   proxy a photo. The `?v=` changes whenever the photo does, so the
   day-long private cache never shows an old one.
 - For "Sign out", link to `canopy.signOutUrl(req)`. That signs the
@@ -808,6 +907,9 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
      `SMTP_PASS`, `MAIL_FROM`: see "Email: iCloud SMTP".
    - `PUBLIC_URL` and `CANOPY_DOMAIN`: leave unset. They default to
      `https://account.canopysf.com` and `canopysf.com`.
+   - `ANDROID_APK_KEY_HASHES`: empty until there's an Android app. Then
+     its signing certificate's SHA-256 (see "Apps" and
+     `docs/native-api.md`).
    - Leave `PORT` and `DATA_DIR` alone. The Dockerfile sets them.
 6. Deploy.
 7. **Make the admin.** Open `https://account.canopysf.com`. A new install

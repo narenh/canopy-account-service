@@ -11,7 +11,7 @@ const { createImageStore } = require('./lib/uploadedImage');
 const session = require('./lib/session');
 const mailer = require('./lib/mailer');
 const { attemptLimiter, guessLimits, clientIp } = require('./lib/limits');
-const { BASE, isCanopyOrigin, safeReturn, passkeyRpId } = require('./lib/domain');
+const { BASE, isCanopyOrigin, safeReturn, passkeyRpId, isAppOrigin } = require('./lib/domain');
 
 const logoImageStore = createImageStore('logo');
 const backdropImageStore = createImageStore('backdrop');
@@ -93,9 +93,29 @@ app.use((req, res, next) => {
 // (SameSite=Lax); this covers Canopy's own subdomains, which count as the
 // same site to the browser. Browsers send Origin on every POST, PATCH,
 // PUT and DELETE, so a missing one is refused too.
+//
+// The apps send no Origin, and don't need to: forging a request is about
+// getting the browser to attach something it attaches by itself (the
+// cookie), and the app endpoints never read the cookie. What they read is
+// an Authorization: Bearer header, which no browser attaches by itself,
+// and which another site's page can't set without asking first (a CORS
+// preflight, which this service never says yes to for these). So a
+// request to /api/native/ that carries a bearer header skips this check,
+// and so does the one step that comes before there's a token to carry
+// (auth/begin), if it's JSON: also something a page elsewhere can't send
+// without that preflight. See "The Origin check" in the README.
+const NATIVE = '/api/native/v1';
+
+function exemptAsApp(req) {
+  if (!req.path.startsWith(NATIVE + '/')) return false;
+  if (session.readBearer(req.get('authorization')) !== undefined) return true;
+  return req.path === `${NATIVE}/auth/begin` && !!req.is('application/json');
+}
+
 app.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
   if (isCanopyOrigin(req.get('origin'))) return next();
+  if (exemptAsApp(req)) return next();
   res.status(403).json({ error: 'requests that change something must come from a Canopy page', reason: 'bad_origin' });
 });
 
@@ -152,6 +172,31 @@ function attachSession(create) {
     req.person = s && s.personId ? store.getPerson(s.personId) : null;
     next();
   };
+}
+
+// The session an app's request names, by its Authorization: Bearer token
+// and nothing else: never the cookie, even when one came along too. A
+// bearer header that isn't shaped like a token is nobody. Puts req.sess
+// and req.person on the request like attachSession, and keeps the session
+// alive (last seen) the same way. There's no cookie to renew: the token
+// lasts a year from when it was last used, like the cookie's session.
+function bearerSession(req) {
+  req.sess = null;
+  req.person = null;
+  const token = session.readBearer(req.get('authorization'));
+  const s = token ? store.getSessionByToken(token) : null;
+  if (!s) return;
+  store.touchSession(s.idHash, s.lastSeenAt);
+  req.sess = s;
+  req.person = s.personId ? store.getPerson(s.personId) : null;
+}
+
+// For what both a browser and an app ask for (a photo): the bearer header
+// when there is one, which then decides alone, otherwise the cookie.
+function cookieOrBearer(req, res, next) {
+  if (session.readBearer(req.get('authorization')) === undefined) return attachSession(false)(req, res, next);
+  bearerSession(req);
+  next();
 }
 
 function photoUrlFor(req, person) {
@@ -322,7 +367,8 @@ function meView(req) {
   return { person: req.person ? { ...personView(req, req.person), isAdmin: isAdmin(req) } : null };
 }
 
-app.get('/api/me', attachSession(false), (req, res) => res.json(meView(req)));
+const me = (req, res) => res.json(meView(req));
+app.get('/api/me', attachSession(false), me);
 
 // ---------------- Guess limits ----------------
 //
@@ -379,12 +425,17 @@ function requirePasskeyRp(req, res) {
 
 // The page the passkey was made or used on, from the browser's own
 // signed record of it -- accepted if it's any Canopy page (lib/domain.js).
-// The library then checks the response against exactly that.
-function ceremonyOrigin(response) {
+// The library then checks the response against exactly that. From an app
+// (req.native), the app's own origin is accepted too: https://<rpID> from
+// iOS, or a listed Android signing certificate (lib/domain.js). The web's
+// endpoints never accept those.
+function ceremonyOrigin(req, response, rpID) {
   try {
     const json = Buffer.from(response.response.clientDataJSON, 'base64url').toString('utf8');
     const origin = JSON.parse(json).origin;
-    return isCanopyOrigin(origin) ? origin : null;
+    if (typeof origin !== 'string') return null;
+    if (isCanopyOrigin(origin)) return origin;
+    return req.native && isAppOrigin(origin, rpID) ? origin : null;
   } catch (e) {
     return null;
   }
@@ -645,18 +696,31 @@ app.post('/api/auth/register/add', requireSignedIn, registerAdd);
 // A passkey just checked out for personId: sign this browser in, under a
 // new token. On first run (the setup password entered here, no admin yet)
 // they're the admin now; in recovery the admin stays who it was.
+//
+// An app's ceremony is signed in the same way, and its new token is its
+// bearer token from then on: it goes back in the answer (signedInView)
+// rather than in a cookie. The app said what it is when it began.
 function finishSignIn(req, res, personId) {
   const granted = hasAdminSetupGrant(req);
   const { token, idHash } = store.rotateSession(req.sess.idHash);
-  res.append('Set-Cookie', session.cookieHeader(token, req.hostname));
+  if (!req.native) res.append('Set-Cookie', session.cookieHeader(token, req.hostname));
   store.signIn(idHash, personId);
-  store.markSignedIn(idHash, { kind: 'web', name: session.browserName(req.get('user-agent')) });
+  store.markSignedIn(idHash, req.native
+    ? { kind: req.sess.clientKind, name: req.sess.clientName }
+    : { kind: 'web', name: session.browserName(req.get('user-agent')) });
   if (granted) {
     store.takeAdminSetup(idHash);
     if (!store.getAdminPersonId()) store.setAdminPersonId(personId);
   }
   req.sess = { ...req.sess, idHash, personId, adminSetupAt: null };
   req.person = store.getPerson(personId);
+  req.signedInToken = token;
+}
+
+// The answer to a step that signed someone in: who they are, and for an
+// app, the token to keep.
+function signedInView(req) {
+  return req.native ? { token: req.signedInToken, ...meView(req) } : meView(req);
 }
 
 const registerVerify = handle(async (req, res) => {
@@ -668,7 +732,7 @@ const registerVerify = handle(async (req, res) => {
     return res.status(400).json(EXPIRED);
   }
   const response = (req.body || {}).response;
-  const origin = ceremonyOrigin(response);
+  const origin = ceremonyOrigin(req, response, rpID);
   if (!origin) return res.status(400).json(NOT_VERIFIED);
   let result;
   try {
@@ -728,7 +792,7 @@ const registerVerify = handle(async (req, res) => {
     return res.status(400).json(EXPIRED);
   }
   finishSignIn(req, res, personId);
-  res.status(201).json(meView(req));
+  res.status(201).json(signedInView(req));
 });
 app.post('/api/auth/register/verify', attachSession(false), registerVerify);
 
@@ -755,7 +819,7 @@ const loginVerify = handle(async (req, res) => {
   const passkey = store.getPasskey(response && response.id);
   // Deleted by a reset, or made for an account that's since gone.
   if (!passkey) return res.status(400).json({ error: 'that passkey is no longer linked to an account', reason: 'unknown_passkey' });
-  const origin = ceremonyOrigin(response);
+  const origin = ceremonyOrigin(req, response, rpID);
   if (!origin) return res.status(400).json(NOT_VERIFIED);
   let result;
   try {
@@ -773,7 +837,7 @@ const loginVerify = handle(async (req, res) => {
   if (!result.verified) return res.status(400).json(NOT_VERIFIED);
   store.usePasskey(passkey.id, result.authenticationInfo.newCounter);
   finishSignIn(req, res, passkey.personId);
-  res.json(meView(req));
+  res.json(signedInView(req));
 });
 app.post('/api/auth/login/verify', attachSession(false), loginVerify);
 
@@ -785,7 +849,7 @@ app.post('/api/auth/login/verify', attachSession(false), loginVerify);
 
 function signOut(req, res) {
   if (req.sess) store.endSession(req.sess.idHash);
-  res.append('Set-Cookie', session.clearHeader(req.hostname));
+  if (!req.native) res.append('Set-Cookie', session.clearHeader(req.hostname));
 }
 
 const signOutHere = (req, res) => {
@@ -886,7 +950,7 @@ const reauthVerify = handle(async (req, res) => {
   const passkey = store.getPasskey(response && response.id);
   // It has to be one of the signed-in person's own.
   if (!passkey || passkey.personId !== req.person.id) return res.status(400).json(NOT_VERIFIED);
-  const origin = ceremonyOrigin(response);
+  const origin = ceremonyOrigin(req, response, rpID);
   if (!origin) return res.status(400).json(NOT_VERIFIED);
   let result;
   try {
@@ -1075,9 +1139,14 @@ const saveProfile = (req, res) => {
 };
 app.patch('/api/profile', requireSignedIn, saveProfile);
 
+// The browser's photo is already a fresh JPEG from its canvas; an app's is
+// whatever the app sent, so it has to be a JPEG this can read, and its
+// metadata (where it was taken, for one) is taken out either way.
 const savePhoto = (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'choose a photo' });
-  photoStore.save(req.person.id, req.file.buffer);
+  if (!req.file) return res.status(400).json({ error: 'choose a photo', reason: 'no_photo' });
+  const clean = photoStore.withoutMetadata(req.file.buffer);
+  if (!clean && req.native) return res.status(400).json({ error: 'a photo is a JPEG', reason: 'bad_photo' });
+  photoStore.save(req.person.id, clean || req.file.buffer);
   req.person = store.setPersonPhoto(req.person.id, Date.now());
   res.json(meView(req));
 };
@@ -1114,8 +1183,8 @@ app.delete('/api/profile/passkeys/:id', requireSignedIn, removePasskey);
 // Photos are for browsers signed in to a Canopy account, not the open
 // web. Canopy sites show them straight from here: an <img> on any Canopy
 // subdomain sends the cookie, since the browser counts it as the same
-// site.
-app.get('/photo/:personId', attachSession(false), (req, res) => {
+// site. An app has no cookie: it sends its bearer token (cookieOrBearer).
+app.get('/photo/:personId', cookieOrBearer, (req, res) => {
   if (!req.person) return res.status(404).end();
   let file = null;
   try { file = photoStore.pathFor(req.params.personId); } catch (e) {}
@@ -1124,6 +1193,118 @@ app.get('/photo/:personId', attachSession(false), (req, res) => {
   res.set('Cache-Control', 'private, max-age=86400');
   res.sendFile(file);
 });
+
+// ---------------- Apps ----------------
+//
+// The iOS and Android apps sign in here and then use a token, sent as
+// `Authorization: Bearer <token>`, to Canopy sites (events) and to this
+// service. The token is a canopy_session value like any browser's cookie,
+// naming a row in `sessions`, so everything that works on sessions works
+// on it: /api/session, signing out (here, on the profile, everywhere),
+// the admin's reset and delete, and the takeover rule.
+//
+// A browser keeps a sign-in that's under way on its session row (the
+// challenge, the emailed code, the proven email), found by its cookie. An
+// app has no cookie, so it starts with auth/begin, which makes a fresh row
+// that isn't signed in and hands back its token as `ceremony`. The app
+// sends that as its bearer token at every step. When a step signs in, the
+// row is signed in under a new token (as a browser's is), which comes
+// back as `token`: the app keeps that one, in the Keychain or Keystore.
+// A ceremony nobody finishes runs out after a day, like a browser's.
+//
+// Every step below is the web's own handler, mounted again: the same
+// rules, the same limits (counted in the same counters, so the web and
+// the apps share one budget), the same answers. What differs is decided
+// by req.native: no cookies set or cleared, the token in the answer,
+// passkeys accepted from the apps' origins, and a photo that has to be a
+// JPEG. docs/native-api.md is the guide for app developers, and
+// openapi.yaml the contract.
+const native = express.Router();
+app.use(NATIVE, (req, res, next) => {
+  req.native = true;
+  // Tokens travel in these answers.
+  res.set('Cache-Control', 'no-store');
+  next();
+}, native);
+
+// A step in a sign-in: the bearer has to be a ceremony from auth/begin,
+// still running. An app that's signed in signs out before signing in
+// again, so a signed-in token is never turned into someone else's.
+function nativeCeremony(req, res, next) {
+  bearerSession(req);
+  if (!req.sess) return res.status(400).json(EXPIRED);
+  if (req.person) return res.status(409).json({ error: 'already signed in -- sign out first', reason: 'signed_in' });
+  next();
+}
+
+function nativeSignedIn(req, res, next) {
+  bearerSession(req);
+  if (req.person) return next();
+  res.status(401).json({ error: 'unauthorized', reason: 'signed_out' });
+}
+
+function nativeAnyone(req, res, next) {
+  bearerSession(req);
+  next();
+}
+
+// What the app calls itself, for the person's list of where they're
+// signed in: "Canopy Events on iPhone". Plain text, short, and only ever
+// shown to the person themself.
+function cleanLabel(raw) {
+  return String(raw == null ? '' : raw).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+// Starts a sign-in (or sign-up) from an app: { platform: 'ios' |
+// 'android', app?, device? } -> { ceremony }.
+native.post('/auth/begin', (req, res) => {
+  const body = req.body || {};
+  if (body.platform !== 'ios' && body.platform !== 'android') {
+    return res.status(400).json({ error: 'platform is ios or android', reason: 'bad_platform' });
+  }
+  const appName = cleanLabel(body.app);
+  const device = cleanLabel(body.device);
+  const name = appName && device ? `${appName} on ${device}` : appName || device || null;
+  const { token } = store.createSession({ kind: body.platform, name });
+  res.status(201).json({ ceremony: token });
+});
+
+// Signing in with a passkey.
+native.post('/auth/passkey/options', nativeCeremony, loginOptions);
+native.post('/auth/passkey/verify', nativeCeremony, loginVerify);
+// An email and a code, then a new account or a new passkey.
+native.post('/auth/email/start', nativeCeremony, emailStart);
+native.post('/auth/email/verify', nativeCeremony, emailVerify);
+native.post('/auth/register/new', nativeCeremony, registerNew);
+native.post('/auth/register/existing', nativeCeremony, registerExisting);
+// The quick sign-up.
+native.post('/auth/quick/start', nativeCeremony, quickStart);
+// The passkey that finishes any of the three above.
+native.post('/auth/register/verify', nativeCeremony, registerVerify);
+
+// Signing out: this token, or every browser and app.
+native.post('/signout', nativeAnyone, signOutHere);
+native.post('/signout/everywhere', nativeSignedIn, signOutEverywhere);
+
+// The profile.
+native.get('/me', nativeSignedIn, me);
+native.patch('/me', nativeSignedIn, saveProfile);
+native.post('/me/photo', nativeSignedIn, photoUpload.single('photo'), savePhoto);
+native.get('/me/passkeys', nativeSignedIn, listPasskeys);
+native.post('/me/passkeys/options', nativeSignedIn, registerAdd);
+native.post('/me/passkeys/verify', nativeSignedIn, registerVerify);
+native.delete('/me/passkeys/:id', nativeSignedIn, removePasskey);
+// Changing the email: a passkey check, then a code to the new address.
+native.post('/me/reauth/options', nativeSignedIn, reauthOptions);
+native.post('/me/reauth/verify', nativeSignedIn, reauthVerify);
+native.post('/me/email/start', nativeSignedIn, emailChangeStart);
+native.post('/me/email/verify', nativeSignedIn, emailChangeVerify);
+// Proving the email (an unverified account's banner).
+native.post('/me/verify/start', nativeSignedIn, verifyStart);
+native.post('/me/verify/check', nativeSignedIn, verifyCheck);
+// Where they're signed in.
+native.get('/me/sessions', nativeSignedIn, listSessions);
+native.delete('/me/sessions/:id', nativeSignedIn, endOneSession);
 
 // ---------------- Admin ----------------
 
@@ -1514,6 +1695,12 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-app.listen(PORT, () => {
-  console.log(`canopy-account listening on port ${PORT}`);
-});
+// Started as the server (node server.js); a test can require this file
+// for the routes without it listening.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`canopy-account listening on port ${PORT}`);
+  });
+}
+
+module.exports = { app, native };

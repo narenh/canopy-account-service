@@ -21,8 +21,9 @@
 //
 // Who the visitor is comes from their canopy_session cookie, or from an
 // `Authorization: Bearer <token>` header carrying the same 43-character
-// value (for native apps; the bearer wins when both are there). Nothing
-// is ever sent back as Set-Cookie for a bearer request.
+// value (for the native apps, which get it by signing in through the
+// account service's /api/native/v1; the bearer wins when both are there).
+// Nothing is ever sent back as Set-Cookie for a bearer request.
 //
 // Someone whose email isn't proven yet (a quick sign-up) is only signed in
 // on a site the account admin lets them into. Anywhere else req.person is

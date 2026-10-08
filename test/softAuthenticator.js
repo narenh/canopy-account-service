@@ -1,6 +1,7 @@
 // A software passkey for tests: makes and uses ES256 credentials the way a
 // phone does, so the real @simplewebauthn/server checks run end to end.
-// "none" attestation, like every real sign-up here.
+// "none" attestation, like every real sign-up here. `origin` is wherever it
+// says it was used: a page, or an app (IOS_ORIGIN, fakeSigningCert below).
 
 const crypto = require('crypto');
 
@@ -82,4 +83,22 @@ function createAuthenticator() {
   return { register, authenticate, creds };
 }
 
-module.exports = { createAuthenticator };
+// ---- Where a passkey says it was used, from an app ----
+//
+// The iOS app (ASAuthorization) signs as https:// + the passkey domain.
+// An Android app (Credential Manager) signs as android:apk-key-hash: + the
+// base64url SHA-256 of its signing certificate; `fakeSigningCert` stands
+// in for one, and `fingerprint` is how keytool and assetlinks.json write
+// its hash.
+const IOS_ORIGIN = 'https://canopysf.com';
+
+function fakeSigningCert(seed = 'canopy-events-release') {
+  const der = sha256(seed);
+  const hash = sha256(der);
+  return {
+    origin: 'android:apk-key-hash:' + b64u(hash),
+    fingerprint: hash.toString('hex').toUpperCase().match(/../g).join(':')
+  };
+}
+
+module.exports = { createAuthenticator, IOS_ORIGIN, fakeSigningCert };
