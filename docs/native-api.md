@@ -31,7 +31,8 @@ Every path below is under **`https://account.canopysf.com/api/native/v1`**.
   never read one.
 - Errors are `{"error": "<a sentence>", "reason": "<code>"}` with the
   right status. Match on `reason`. The sentence is for logs, and may
-  change. The reasons are listed under "Errors" at the end.
+  change. The reasons are listed under "Errors" at the end. Every answer
+  under `/api/native/v1` is JSON, errors included, never an HTML page.
 - Times are milliseconds since 1970 (UTC), as numbers.
 - Answers are `Cache-Control: no-store`.
 
@@ -477,7 +478,8 @@ Crop it square and shrink it on the phone first (the web sends 512 by
 the part's `Content-Type: image/jpeg`. The server takes the metadata out
 (EXIF and the rest: where it was taken, the camera, the orientation)
 before saving it, so send the pixels upright. `400 no_photo`, `400
-bad_photo` (not a JPEG it can read), `400 too_large`.
+bad_photo` (not a JPEG it can read), `400 too_large`, `400 bad_upload`
+(not multipart, or the body was cut short).
 
 ## Passkeys
 
@@ -576,6 +578,7 @@ over.
 | 400 | `not_verified` | The passkey response didn't check out | Ask for options and try again |
 | 400 | `no_photo`, `bad_photo`, `too_large`, `bad_upload` | The upload | Send a JPEG under 3 MB in `photo` |
 | 400 | `bad_json` | The body isn't JSON | Fix the request |
+| 400 | `bad_request` | The request can't be read (a path with a `%` that doesn't decode) | Fix the request |
 | 400 | `no_passkeys` | Passkeys aren't available on this host | A misconfigured server |
 | 401 | `signed_out` | The token is over | Delete it, show sign-in |
 | 403 | `wrong_code` | Not the code | Let them try again |
@@ -590,6 +593,7 @@ over.
 | 409 | `last_passkey` | It's their only passkey | Add another first |
 | 409 | `email_unavailable` | At the code step: the new email has an account | Ask for another |
 | 429 | `rate_limited` | Too many tries | Wait a few minutes |
+| 500 | `server_error` | Something went wrong here | Try again; report it if it keeps happening |
 | 502 | `mail_failed` | The email couldn't be sent | Try again later |
 
 ## Limits

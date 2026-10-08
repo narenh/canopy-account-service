@@ -21,8 +21,11 @@ info:
 
     **Errors** are JSON: `{"error": "<a sentence>", "reason": "<code>"}`.
     Match on `reason`; the sentence is for logs. Any request may also get
-    `429 rate_limited` where something is counted (see each step), and a
-    malformed JSON body gets `400 bad_json`.
+    `429 rate_limited` where something is counted (see each step), a
+    malformed JSON body gets `400 bad_json`, a request that can't be read
+    otherwise (a path with a `%` that doesn't decode, say) `400
+    bad_request`, and anything unexpected `500 server_error`. Every answer
+    is JSON, errors included; never a page.
 
     **Times** are milliseconds since 1970 (UTC), as numbers.
 servers:
@@ -405,7 +408,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Me' }
         '400':
-          description: '`no_photo` (no part named photo, or not an image type), `bad_photo` (not a readable JPEG), `too_large`, `bad_upload`.'
+          description: '`no_photo` (no part named photo, or not an image type), `bad_photo` (not a readable JPEG), `too_large`, `bad_upload` (not multipart, or cut short).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

@@ -400,6 +400,32 @@ const quickTryLimits = guessLimits({ perWho: [10, 15 * 60 * 1000], perIp: [20, 6
 const quickMadeLimits = guessLimits({ perIp: [10, 60 * 60 * 1000], overall: [50, 60 * 60 * 1000] });
 const emailChangeLimiter = attemptLimiter(5, 60 * 60 * 1000);
 
+// An error that got as far as Express, as the JSON every API answer is:
+// {error, reason}. An upload's own (too big, or malformed: uploadOne), a
+// body that isn't JSON, anything else that says it's the request's fault
+// (err.status or err.statusCode in the 4xx, like a path with a % that
+// doesn't decode), and otherwise a 500 that says nothing more (the error
+// itself goes to the log).
+function errorAnswer(err) {
+  if (err instanceof multer.MulterError) {
+    return err.code === 'LIMIT_FILE_SIZE' ? [400, 'image is too large', 'too_large'] : [400, err.message, 'bad_upload'];
+  }
+  if (err && err.type === 'entity.parse.failed') return [400, 'bad JSON', 'bad_json'];
+  if (err && err.type === 'entity.too.large') return [413, 'too large', 'too_large'];
+  const status = err && (err.status || err.statusCode);
+  if (Number.isInteger(status) && status >= 400 && status < 500) {
+    return err.reason ? [status, err.message, err.reason] : [status, 'bad request', 'bad_request'];
+  }
+  return [500, 'something went wrong', 'server_error'];
+}
+
+function jsonErrors(err, req, res, next) {
+  if (res.headersSent) return next(err);
+  const [status, error, reason] = errorAnswer(err);
+  if (status >= 500) console.error(`[canopy-account] ${req.method} ${req.originalUrl} failed: ${(err && err.stack) || err}`);
+  res.status(status).json({ error, reason });
+}
+
 function tooMany(res) {
   return res.status(429).json({ error: 'too many tries -- wait a few minutes', reason: 'rate_limited' });
 }
@@ -1099,6 +1125,20 @@ const photoUpload = multer({
   }
 });
 
+// One file from a multipart body, with any error on the way marked as the
+// upload's fault. Multer's own (too big, an unexpected part) already say
+// so; the parser's (a body cut short, no boundary, the connection
+// dropped) are plain errors, which would otherwise be a 500.
+function uploadOne(upload, field) {
+  const middleware = upload.single(field);
+  return (req, res, next) => middleware(req, res, (err) => {
+    if (err && !(err instanceof multer.MulterError)) {
+      return next(Object.assign(new Error(`bad upload: ${err.message}`), { status: 400, reason: 'bad_upload' }));
+    }
+    next(err);
+  });
+}
+
 // The fields of a profile, from a request body, cleaned: { changes } or
 // { error } (a 400 to send). Names are required; every other field is
 // only touched when sent, and empty clears it. The email is only for the
@@ -1165,7 +1205,7 @@ const savePhoto = (req, res) => {
   req.person = store.setPersonPhoto(req.person.id, Date.now());
   res.json(meView(req));
 };
-app.post('/api/profile/photo', requireSignedIn, photoUpload.single('photo'), savePhoto);
+app.post('/api/profile/photo', requireSignedIn, uploadOne(photoUpload, 'photo'), savePhoto);
 
 function passkeyView(k) {
   return {
@@ -1304,7 +1344,7 @@ native.post('/signout/everywhere', nativeSignedIn, signOutEverywhere);
 // The profile.
 native.get('/me', nativeSignedIn, me);
 native.patch('/me', nativeSignedIn, saveProfile);
-native.post('/me/photo', nativeSignedIn, photoUpload.single('photo'), savePhoto);
+native.post('/me/photo', nativeSignedIn, uploadOne(photoUpload, 'photo'), savePhoto);
 native.get('/me/passkeys', nativeSignedIn, listPasskeys);
 native.post('/me/passkeys/options', nativeSignedIn, registerAdd);
 native.post('/me/passkeys/verify', nativeSignedIn, registerVerify);
@@ -1330,8 +1370,10 @@ native.get('/openapi.yaml', (req, res) => {
 });
 
 // Anything else under /api/native/v1 is an app asking for something that
-// isn't there: JSON, like every other answer it gets, not a page.
+// isn't there: JSON, like every other answer it gets, not a page. So is
+// anything that goes wrong (jsonErrors).
 native.use((req, res) => res.status(404).json({ error: 'not found', reason: 'not_found' }));
+native.use((err, req, res, next) => jsonErrors(err, req, res, next));
 
 // ---------------- Admin ----------------
 
@@ -1677,7 +1719,7 @@ function mountImageRoutes(urlName, imageStore) {
     const meta = imageStore.getMeta();
     res.json(meta ? { uploadedAt: meta.uploadedAt, url: `/${urlName}?v=${meta.uploadedAt}` } : { uploadedAt: null, url: null });
   });
-  app.post(`/api/admin/${urlName}`, siteImageUpload.single('image'), (req, res) => {
+  app.post(`/api/admin/${urlName}`, uploadOne(siteImageUpload, 'image'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'choose a PNG, JPEG, WebP, or GIF image' });
     const meta = imageStore.save(req.file.buffer, req.file.mimetype);
     res.json({ ok: true, uploadedAt: meta.uploadedAt, url: `/${urlName}?v=${meta.uploadedAt}` });
@@ -1713,12 +1755,12 @@ app.use(
   })
 );
 
-// Upload errors (bad type, too big) as JSON rather than Express's HTML.
+// Errors under /api/ (and a bad upload or JSON body anywhere) as JSON
+// rather than Express's HTML page. The apps' router has the same, for what
+// goes wrong inside it.
 app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'image is too large' : err.message, reason: err.code === 'LIMIT_FILE_SIZE' ? 'too_large' : 'bad_upload' });
-  }
-  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'bad JSON', reason: 'bad_json' });
+  const parsing = err instanceof multer.MulterError || (err && /^entity\./.test(err.type || ''));
+  if (req.path.startsWith('/api/') || parsing) return jsonErrors(err, req, res, next);
   next(err);
 });
 

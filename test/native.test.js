@@ -384,6 +384,91 @@ test('apps, end to end', async (t) => {
   });
 });
 
+// The reviewer's afuzz.js: bodies of the wrong shape at every sign-in
+// step, paths that don't decode, and an upload cut short. Every answer an
+// app gets is JSON with a reason, never a page and never a 500, and the
+// web's JSON endpoints answer a malformed upload the same way.
+test('malformed requests: JSON with a reason, never a page or a 500', async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  const admin = browser(server);
+  await admin.post('/api/auth/admin-setup', { password: 'setup-pw' });
+  await admin.signUp('host@example.com', 'Hana', 'Host');
+  const ana = nativeApp(server);
+  await ana.signUp('ana@example.com', 'Ana', 'Lima');
+  const isJson = (r) => /^application\/json/.test(r.headers.get('content-type') || '');
+  // Multipart that ends partway through the file.
+  const truncated = {
+    'Content-Type': 'multipart/form-data; boundary=x',
+    body: '--x\r\nContent-Disposition: form-data; name="photo"; filename="a"\r\nContent-Type: image/jpeg\r\n\r\nhello'
+  };
+
+  await t.test('bodies of the wrong shape at each sign-in step', async () => {
+    const app = nativeApp(server);
+    await app.begin();
+    const bodies = ['null', '[]', '"x"', '{"response":"x"}', '{"response":{"id":{},"response":{"clientDataJSON":{}}}}',
+      '{"email":["a@b.co"]}', '{"code":{}}', '{"firstName":{},"lastName":[]}', '{"phone":{"a":1},"firstName":"a","lastName":"b"}', '{not json'];
+    const paths = ['/auth/passkey/options', '/auth/passkey/verify', '/auth/email/start', '/auth/email/verify',
+      '/auth/register/new', '/auth/register/existing', '/auth/quick/start', '/auth/register/verify'];
+    for (const p of paths) {
+      for (const body of bodies) {
+        const r = await fetch(`${server.base}/api/native/v1${p}`, {
+          method: 'POST', headers: { Authorization: `Bearer ${app.token}`, 'Content-Type': 'application/json' }, body
+        });
+        assert.ok(r.status < 500, `${p} ${body}: ${r.status}`);
+        assert.ok(isJson(r), `${p} ${body}: ${r.headers.get('content-type')}`);
+      }
+    }
+  });
+
+  await t.test("a path that doesn't decode: 400 bad_request", async () => {
+    for (const url of ['/api/native/v1/me/sessions/%', '/api/native/v1/me/passkeys/%E0%A4%A']) {
+      const r = await fetch(server.base + url, { method: 'DELETE', headers: { Authorization: `Bearer ${ana.token}` } });
+      assert.equal(r.status, 400, url);
+      assert.ok(isJson(r), url);
+      assert.equal((await r.json()).reason, 'bad_request');
+    }
+    const web = await fetch(`${server.base}/api/setup/%`);
+    assert.equal(web.status, 400);
+    assert.equal((await web.json()).reason, 'bad_request');
+  });
+
+  await t.test('an upload cut short, from the app and from the web: 400 bad_upload', async () => {
+    const fromApp = await fetch(`${server.base}/api/native/v1/me/photo`, {
+      method: 'POST', headers: { Authorization: `Bearer ${ana.token}`, 'Content-Type': truncated['Content-Type'] }, body: truncated.body
+    });
+    assert.equal(fromApp.status, 400);
+    assert.ok(isJson(fromApp));
+    assert.equal((await fromApp.json()).reason, 'bad_upload');
+    const fromWeb = await fetch(`${server.base}/api/profile/photo`, {
+      method: 'POST',
+      headers: { Cookie: `canopy_session=${admin.cookie}`, Origin: server.base, 'Content-Type': truncated['Content-Type'] },
+      body: truncated.body
+    });
+    assert.equal(fromWeb.status, 400);
+    assert.equal((await fromWeb.json()).reason, 'bad_upload');
+    // Multipart with no boundary at all.
+    const noBoundary = await fetch(`${server.base}/api/native/v1/me/photo`, {
+      method: 'POST', headers: { Authorization: `Bearer ${ana.token}`, 'Content-Type': 'multipart/form-data' }, body: 'x'
+    });
+    assert.equal(noBoundary.status, 400);
+    assert.equal((await noBoundary.json()).reason, 'bad_upload');
+    // The admin's image uploads too.
+    const logo = await fetch(`${server.base}/api/admin/logo-image`, {
+      method: 'POST',
+      headers: { Cookie: `canopy_session=${admin.cookie}`, Origin: server.base, 'Content-Type': truncated['Content-Type'] },
+      body: truncated.body.replace('name="photo"', 'name="image"')
+    });
+    assert.equal(logo.status, 400);
+    assert.equal((await logo.json()).reason, 'bad_upload');
+  });
+
+  await t.test('and the server is still up', async () => {
+    assert.equal((await fetch(`${server.base}/healthz`)).status, 200);
+    assert.equal((await ana.get('/me')).status, 200);
+  });
+});
+
 test('apps: nothing until there is an admin', async (t) => {
   const server = await startServer();
   t.after(() => server.stop());

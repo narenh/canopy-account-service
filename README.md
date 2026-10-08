@@ -97,9 +97,8 @@ feeds stay in tickets, keyed by the person ids from here.
   `CF-Connecting-IP` when it's there).
 - `lib/mailer.js` sends the code email and the two email-change notices
   over SMTP (iCloud Mail, see "Email: iCloud SMTP"). Everything about
-  mail is in this one file, so
-  moving to another provider means changing this file and the `SMTP_*`
-  settings.
+  mail is in this one file, so moving to another provider means changing
+  this file and the `SMTP_*` settings.
 - `lib/photoStore.js` stores profile photos, one square JPEG per person
   in `DATA_DIR/photos/<id>.jpg`. The browser has already cropped and
   shrunk it (`public/photo-crop.js`), so what's on disk is small and
@@ -460,6 +459,11 @@ contract.
   in `ANDROID_APK_KEY_HASHES`, and none is until one is. Both platforms
   also need a file on `canopysf.com` saying the app may use its passkeys
   (see "The association files").
+- **Always JSON.** Every answer under `/api/native/v1` is JSON with a
+  `reason`, errors included: a malformed upload is `400 bad_upload`, a
+  path that doesn't decode `400 bad_request`, and anything unexpected
+  `500 server_error`, never Express's HTML page. The web's `/api/`
+  endpoints answer errors the same way.
 - **Not in the apps:** the admin, the setup password, recovery and setup
   links. Those stay on the web. An app can't sign anyone in until there's
   an admin (`403 setup_required`).
