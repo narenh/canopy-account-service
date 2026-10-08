@@ -20,7 +20,9 @@ is this**, **what's their name and photo**, and **are they signed in**.
   or Instagram can find them** (on unless they turn it off), see their
   passkeys (add one, remove one they've
   lost), see **where they're signed in** (each browser and app, with
-  **Sign out** on any of them, and **Sign out everywhere**) and sign out.
+  **Sign out** on any of them, and **Sign out everywhere**), sign out,
+  and **delete their account** (their passkey, then typing DELETE; see
+  "Deleted accounts").
   **Changing their email** takes three steps: their
   passkey (Face ID or the like, so a borrowed unlocked phone or a stolen
   cookie isn't enough; good for 15 minutes and one change), a code sent
@@ -377,6 +379,32 @@ Deleting someone from the admin deletes their passkeys, every session
 simply stops existing here. Each site keeps its own records under that
 id, and when `/api/people` leaves an id out, the site shows that person
 as a **former member**. No one is notified.
+
+**People can delete their own account**, from the bottom of their
+profile (or `DELETE /api/native/v1/me` in an app). It does exactly what
+the admin's delete does, and then signs that browser out. It takes the
+same passkey check as changing an email (Face ID or the like, within 15
+minutes), so a borrowed unlocked phone or a stolen cookie can't do it;
+the page also has them type `DELETE`, so it can't happen by a slip of the
+thumb (the server needs only the passkey check). The email is free again
+afterwards: signing up with it makes a new, unrelated account.
+
+**The admin can't delete their own account**, this way or from the
+Account Manager (`409 is_admin`): there would be no admin, and the
+install would be open to whoever next enters the setup password. Their
+profile says so in place of the button.
+
+**What other sites keep.** Deleting an account here deletes what this
+service holds about them, and nothing on any other site: each one keeps
+what it recorded, under the id, as it sees fit. Events keeps their RSVPs
+(so a guest count doesn't change after the fact), their wall posts and
+anything else they did there, all under the id and all shown as "Former
+member" with no photo. The text they wrote on a wall stays as written;
+whether events should also delete it is an open question for events (see
+its decision log), not something this service can do. Tickets keeps its
+orders the same way. Anyone deleting their account to be forgotten
+should be told that: their name and photo are gone everywhere, and what
+they wrote on a site is that site's to remove.
 
 ## The session cookie
 

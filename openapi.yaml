@@ -384,6 +384,40 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/SignedOut' }
+    delete:
+      tags: [Profile]
+      summary: Delete the account
+      description: |
+        Deletes the signed-in person's account, as the admin's delete does:
+        their passkeys, every session (this token included, and every
+        browser and other app), any setup links, and their photo. Needs a
+        passkey check from the last 15 minutes first (`me/reauth/*`), the
+        same as changing the email; ask them to confirm in the app too
+        (the web has them type DELETE). Afterwards forget the token. Canopy
+        sites keep what they recorded under the id and show them as a
+        former member. The admin's account can't be deleted this way.
+      operationId: deleteMe
+      responses:
+        '200':
+          description: Deleted. The token no longer works.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, const: true }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '403':
+          description: '`reauth_required`: confirm with a passkey first (`me/reauth/*`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`is_admin`: the admin''s account, which would leave nobody to run Canopy accounts.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /me/photo:
     post:

@@ -139,6 +139,15 @@ const COPY = {
     sessionSignOut: 'Sign out',
     signOutEverywhere: 'Sign out everywhere',
     signOutEverywhereConfirm: 'Sign out of every browser and app you’re signed in on, this one included?',
+    // Deleting your own account, at the bottom of the profile.
+    deleteHeading: 'Delete my account',
+    deleteHint: 'Your account, passkeys and photo are deleted, and you’re signed out everywhere. Canopy sites keep what you did there (an RSVP, a post), shown as “Former member”. This can’t be undone.',
+    deleteAdmin: 'You’re the admin, so this account can’t be deleted: it would leave nobody to run Canopy accounts.',
+    deleteButton: 'Delete my account',
+    deleteSheetHeading: 'Delete your account',
+    deletePasskeyHint: 'First, confirm it’s you with your passkey.',
+    deleteConfirmHint: 'Type DELETE to confirm. This can’t be undone.',
+    deleteFinal: 'Delete my account for good',
     // The admin's way back from their own profile.
     admin: 'Back to manager',
     // An account whose email isn't proven yet: a quick sign-up, or an

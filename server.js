@@ -1129,6 +1129,30 @@ const emailChangeVerify = handle(async (req, res) => {
 });
 app.post('/api/profile/email/verify', requireSignedIn, emailChangeVerify);
 
+// ---------------- Deleting your own account ----------------
+//
+// Exactly what the admin's delete does (their passkeys, every session
+// everywhere, any setup links, the photo), done by the person themself,
+// and then this browser is signed out. It takes a passkey check from the
+// last 15 minutes, the same as changing an email: a borrowed unlocked
+// phone or a stolen cookie isn't enough. (The page also has them type
+// DELETE, so it can't happen by a slip; the server doesn't need that.)
+// Every site keeps what it recorded under their id and shows them as a
+// former member. Not the admin: that would leave an install with nobody
+// to run it.
+const deleteMe = (req, res) => {
+  if (req.person.id === store.getAdminPersonId()) {
+    return res.status(409).json({ error: "the admin's account can't be deleted: it would leave nobody to run Canopy accounts", reason: 'is_admin' });
+  }
+  if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
+  const id = req.person.id;
+  if (!store.deletePerson(id)) return res.status(404).json({ error: 'not found', reason: 'not_found' });
+  try { photoStore.remove(id); } catch (e) {}
+  if (!req.native) res.append('Set-Cookie', session.clearHeader(req.hostname));
+  res.json({ ok: true });
+};
+app.delete('/api/profile', requireSignedIn, deleteMe);
+
 // ---------------- Proving your own email ----------------
 //
 // A quick sign-up (or someone whose email the admin changed) proves the
@@ -1431,6 +1455,8 @@ native.post('/me/verify/check', nativeSignedIn, verifyCheck);
 // Where they're signed in.
 native.get('/me/sessions', nativeSignedIn, listSessions);
 native.delete('/me/sessions/:id', nativeSignedIn, endOneSession);
+// Deleting the account (a passkey check first, as for the email).
+native.delete('/me', nativeSignedIn, deleteMe);
 
 // The contract, for app developers and their tools. test/docs.test.js
 // keeps it and the routes above in step.

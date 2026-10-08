@@ -530,6 +530,24 @@ old one.
    a notice. `409 email_unavailable` if the address has an account (which
    only its owner, who got no code, could be told).
 
+## Deleting the account
+
+`DELETE /me` deletes the signed-in person's account: their passkeys,
+every session (this token, every browser and every other app), any setup
+links, and their photo, exactly as the admin's delete does. It needs a
+passkey check first, the same one as changing the email: `POST
+/me/reauth/options` and `POST /me/reauth/verify` (step 1 above), good for
+15 minutes. Without it: `403 reauth_required`.
+
+Ask them to confirm in the app before the passkey prompt, in words that
+say it can't be undone (the web profile has them type DELETE). It answers
+`200 {"ok": true}`; then forget the token, which already doesn't work.
+Canopy sites keep what they recorded under the id (an RSVP, a post) and
+show them as "Former member".
+
+The admin's account can't be deleted: `409 is_admin`. Don't offer it to
+them (`GET /me` says `isAdmin`).
+
 ## Where they're signed in, and signing out
 
 ```http
