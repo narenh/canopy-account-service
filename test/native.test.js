@@ -592,6 +592,41 @@ test('apps share the web limits', async (t) => {
   });
 });
 
+// The web's upload, which used to save whatever withoutMetadata couldn't
+// read as it came (and serve it as image/jpeg, metadata and all).
+test("the web's photo upload: metadata out, and nothing kept that can't be cleaned", async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+  const admin = browser(server);
+  await admin.post('/api/auth/admin-setup', { password: 'setup-pw' });
+  const hanaId = (await admin.signUp('host@example.com', 'Hana', 'Host')).data.person.id;
+  const file = path.join(server.dataDir, 'photos', `${hanaId}.jpg`);
+
+  await t.test('a PNG, a WebP, or a JPEG it cannot read: 400 bad_image, nothing saved', async () => {
+    const refused = [
+      [Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('tEXtsecret-location')]), 'image/png'],
+      [Buffer.from('RIFF\u0000\u0000\u0000\u0000WEBPVP8 secret-location', 'latin1'), 'image/webp'],
+      [Buffer.from('ffd8ffe0', 'hex'), 'image/jpeg'],
+      [jpegWithMetadata().subarray(0, 60), 'image/jpeg']
+    ];
+    for (const [buf, type] of refused) {
+      const r = await admin.upload('/api/profile/photo', photoForm(buf, type));
+      assert.equal(r.status, 400, `${type}: ${r.text}`);
+      assert.equal(r.data.reason, 'bad_image');
+    }
+    assert.equal((await admin.get('/api/me')).data.person.photoUrl, null);
+    assert.ok(!require('fs').existsSync(file));
+  });
+
+  await t.test("a JPEG is kept without its metadata, as the app's is", async () => {
+    const up = await admin.upload('/api/profile/photo', photoForm(jpegWithMetadata()));
+    assert.equal(up.status, 200, up.text);
+    const text = require('fs').readFileSync(file).toString('latin1');
+    for (const secret of ['secret-location', 'secret-iptc', 'secret-comment', 'secret-motion-photo']) assert.ok(!text.includes(secret), secret);
+    assert.ok(text.includes('the-pixels'));
+  });
+});
+
 test('photo metadata: what withoutMetadata keeps and refuses', () => {
   const { withoutMetadata } = require('../lib/photoStore');
   assert.equal(withoutMetadata(Buffer.from('not a jpeg')), null);

@@ -148,7 +148,8 @@ test('accounts, end to end', async (t) => {
     assert.equal(kept.cashapp, 'AnaL');
     assert.equal(kept.phone, '+14155551234');
     const form = new FormData();
-    form.append('photo', new Blob([Buffer.from('ffd8ffe0', 'hex')], { type: 'image/jpeg' }), 'photo.jpg');
+    // A start, one table, the scan and an end: the smallest JPEG it keeps.
+    form.append('photo', new Blob([Buffer.from('ffd8ffdb0004aaaaffda0004bbbb0102ffd9', 'hex')], { type: 'image/jpeg' }), 'photo.jpg');
     const up = await ana.upload('/api/profile/photo', form);
     assert.equal(up.status, 200, up.text);
     const photoPath = new URL(up.data.person.photoUrl).pathname + new URL(up.data.person.photoUrl).search;

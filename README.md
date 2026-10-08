@@ -104,7 +104,11 @@ feeds stay in tickets, keyed by the person ids from here.
   shrunk it (`public/photo-crop.js`), so what's on disk is small and
   carries none of the original's EXIF, location included. An app crops
   its own, so every JPEG's metadata is also taken out here before it's
-  saved (`withoutMetadata`).
+  saved (`withoutMetadata`). Anything it can't clean (a PNG, a WebP, a
+  JPEG it can't read) is refused rather than kept as it came, from the
+  web as well as the apps (`400 bad_image` from the web, `400 bad_photo`
+  from the apps, as their contract says). The page always sends a JPEG
+  from its canvas, so people using it never see that.
 - `lib/uploadedImage.js` stores the admin's uploaded logo and sign-in
   backdrop as files in `DATA_DIR`.
 - `client/canopy-account.js` is the file Canopy sites copy in (see "For
@@ -467,8 +471,8 @@ contract.
 - **Photos.** `GET /photo/<id>` (every `photoUrl`) takes the bearer token
   as well as the cookie, so the apps can show photos too. A bearer header
   decides alone: a malformed or unknown one is nobody, whatever cookie
-  came with it. An app's upload has to be a JPEG, and its metadata is
-  taken out before it's saved (see "How it works").
+  came with it. An upload has to be a JPEG, and its metadata is taken
+  out before it's saved (see "How it works").
 - **Passkeys from the apps.** The phone signs each passkey use with
   where it happened. The iOS app's is `https://canopysf.com` (the
   passkey domain), and an Android app's is `android:apk-key-hash:` and

@@ -1211,14 +1211,18 @@ const saveProfile = (req, res) => {
 };
 app.patch('/api/profile', requireSignedIn, saveProfile);
 
-// The browser's photo is already a fresh JPEG from its canvas; an app's is
-// whatever the app sent, so it has to be a JPEG this can read, and its
-// metadata (where it was taken, for one) is taken out either way.
+// The page sends a fresh JPEG from its canvas, and an app a JPEG of its
+// own; either way its metadata (where it was taken, for one) is taken out,
+// and anything that can't be cleaned isn't kept. That's a PNG, a WebP, or
+// a JPEG this can't read: saved as it came, its metadata would be served
+// to everyone who sees the photo, as image/jpeg. The page never sends one,
+// so only something other than the page gets this answer. The apps' reason
+// is the one their contract has always said (bad_photo).
 const savePhoto = (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'choose a photo', reason: 'no_photo' });
   const clean = photoStore.withoutMetadata(req.file.buffer);
-  if (!clean && req.native) return res.status(400).json({ error: 'a photo is a JPEG', reason: 'bad_photo' });
-  photoStore.save(req.person.id, clean || req.file.buffer);
+  if (!clean) return res.status(400).json({ error: 'a photo is a JPEG', reason: req.native ? 'bad_photo' : 'bad_image' });
+  photoStore.save(req.person.id, clean);
   req.person = store.setPersonPhoto(req.person.id, Date.now());
   res.json(meView(req));
 };
