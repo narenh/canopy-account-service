@@ -143,7 +143,7 @@ const COPY = {
     admin: 'Back to manager',
     // An account whose email isn't proven yet: a quick sign-up, or an
     // email the admin changed. The banner can't be closed.
-    verifyBanner: 'Confirm your email. Until you do, some Canopy sites treat you as signed out.',
+    verifyBanner: "Confirm your email. Until you do, some Canopy sites treat you as signed out, and people can't find you by your phone number or Instagram.",
     verifyButton: 'Confirm email',
     verifyHeading: 'Confirm your email',
     verifyHint: "We'll send a 6-digit code to {email}.",
