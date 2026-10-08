@@ -467,7 +467,7 @@ function emailState(email) {
 // Sends a code to the email. After the setup password, the admin's own
 // email (or any, on first run) counts as proven without one -- that
 // password is the stronger proof, and mail may not be set up yet.
-app.post('/api/auth/email/start', attachSession(true), handle(async (req, res) => {
+const emailStart = handle(async (req, res) => {
   if (!accountsOpen(req, res)) return;
   const email = cleanEmail((req.body || {}).email);
   if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
@@ -491,9 +491,10 @@ app.post('/api/auth/email/start', attachSession(true), handle(async (req, res) =
     return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
   }
   res.json({ verified: false, email });
-}));
+});
+app.post('/api/auth/email/start', attachSession(true), emailStart);
 
-app.post('/api/auth/email/verify', attachSession(false), (req, res) => {
+const emailVerify = (req, res) => {
   if (!req.sess) return res.status(400).json(EXPIRED);
   const email = store.codeEmail(req.sess.idHash);
   if (!email) return res.status(400).json({ error: 'that code has run out -- send a new one', reason: 'expired' });
@@ -506,7 +507,8 @@ app.post('/api/auth/email/verify', attachSession(false), (req, res) => {
     return res.status(403).json({ error: "that isn't the code", reason: 'wrong_code' });
   }
   res.json({ verified: true, ...emailState(result.email) });
-});
+};
+app.post('/api/auth/email/verify', attachSession(false), emailVerify);
 
 // The email this browser has proven, or a refusal (sent here).
 function provenEmail(req, res) {
@@ -517,7 +519,7 @@ function provenEmail(req, res) {
 
 // A new account: its details wait on this session until the passkey
 // exists (register/verify creates both). The photo is uploaded after.
-app.post('/api/auth/register/new', attachSession(false), handle(async (req, res) => {
+const registerNew = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID || !accountsOpen(req, res)) return;
   const email = provenEmail(req, res);
@@ -534,11 +536,12 @@ app.post('/api/auth/register/new', attachSession(false), handle(async (req, res)
     challenge: options.challenge, kind: 'register', profile: { mode: 'new', id, email, ...names, venmo }
   });
   res.json({ options });
-}));
+});
+app.post('/api/auth/register/new', attachSession(false), registerNew);
 
 // A new passkey for the account an emailed code just proved: a new phone,
 // or the old one lost.
-app.post('/api/auth/register/existing', attachSession(false), handle(async (req, res) => {
+const registerExisting = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID || !accountsOpen(req, res)) return;
   const email = provenEmail(req, res);
@@ -553,7 +556,8 @@ app.post('/api/auth/register/existing', attachSession(false), handle(async (req,
     challenge: options.challenge, kind: 'register', personId: person.id, profile: { mode: 'existing', email }
   });
   res.json({ options });
-}));
+});
+app.post('/api/auth/register/existing', attachSession(false), registerExisting);
 
 // ---------------- Quick sign-up ----------------
 //
@@ -570,7 +574,7 @@ app.post('/api/auth/register/existing', attachSession(false), handle(async (req,
 // second account or failing with no reason. The tries are limited (see
 // "Guess limits"). Only once there's an admin.
 
-app.post('/api/auth/quick/start', attachSession(true), handle(async (req, res) => {
+const quickStart = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   if (!store.getAdminPersonId()) return res.status(403).json({ error: 'set up the admin account first', reason: 'setup_required' });
@@ -590,7 +594,8 @@ app.post('/api/auth/quick/start', attachSession(true), handle(async (req, res) =
     challenge: options.challenge, kind: 'register', profile: { mode: 'quick', id, email, ...names }
   });
   res.json({ options });
-}));
+});
+app.post('/api/auth/quick/start', attachSession(true), quickStart);
 
 // Who a setup link is for, so its page can say so. 404 for one that's
 // spent, run out or never existed.
@@ -625,7 +630,7 @@ app.post('/api/auth/register/link', attachSession(true), handle(async (req, res)
 }));
 
 // Another passkey for the signed-in person, from their profile page.
-app.post('/api/auth/register/add', requireSignedIn, handle(async (req, res) => {
+const registerAdd = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   const p = req.person;
@@ -634,7 +639,8 @@ app.post('/api/auth/register/add', requireSignedIn, handle(async (req, res) => {
   });
   store.setPending(req.sess.idHash, { challenge: options.challenge, kind: 'register', personId: p.id, profile: { mode: 'add' } });
   res.json({ options });
-}));
+});
+app.post('/api/auth/register/add', requireSignedIn, registerAdd);
 
 // A passkey just checked out for personId: sign this browser in, under a
 // new token. On first run (the setup password entered here, no admin yet)
@@ -653,7 +659,7 @@ function finishSignIn(req, res, personId) {
   req.person = store.getPerson(personId);
 }
 
-app.post('/api/auth/register/verify', attachSession(false), handle(async (req, res) => {
+const registerVerify = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   if (!req.sess) return res.status(400).json(EXPIRED);
@@ -723,18 +729,20 @@ app.post('/api/auth/register/verify', attachSession(false), handle(async (req, r
   }
   finishSignIn(req, res, personId);
   res.status(201).json(meView(req));
-}));
+});
+app.post('/api/auth/register/verify', attachSession(false), registerVerify);
 
 // Sign in: no email -- the phone offers whichever passkey it has here.
-app.post('/api/auth/login/options', attachSession(true), handle(async (req, res) => {
+const loginOptions = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID || !accountsOpen(req, res)) return;
   const options = await webauthn.generateAuthenticationOptions({ rpID, userVerification: 'preferred' });
   store.setPending(req.sess.idHash, { challenge: options.challenge, kind: 'login' });
   res.json({ options });
-}));
+});
+app.post('/api/auth/login/options', attachSession(true), loginOptions);
 
-app.post('/api/auth/login/verify', attachSession(false), handle(async (req, res) => {
+const loginVerify = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   if (!req.sess) return res.status(400).json(EXPIRED);
@@ -766,7 +774,8 @@ app.post('/api/auth/login/verify', attachSession(false), handle(async (req, res)
   store.usePasskey(passkey.id, result.authenticationInfo.newCounter);
   finishSignIn(req, res, passkey.personId);
   res.json(meView(req));
-}));
+});
+app.post('/api/auth/login/verify', attachSession(false), loginVerify);
 
 // ---------------- Signing out ----------------
 //
@@ -779,10 +788,11 @@ function signOut(req, res) {
   res.append('Set-Cookie', session.clearHeader(req.hostname));
 }
 
-app.post('/api/signout', attachSession(false), (req, res) => {
+const signOutHere = (req, res) => {
   signOut(req, res);
   res.json({ ok: true });
-});
+};
+app.post('/api/signout', attachSession(false), signOutHere);
 
 // ---------------- Where you're signed in ----------------
 //
@@ -805,26 +815,29 @@ function sessionView(req, s) {
   };
 }
 
-app.get('/api/profile/sessions', requireSignedIn, (req, res) => {
+const listSessions = (req, res) => {
   res.json({ sessions: store.sessionsOf(req.person.id).map((s) => sessionView(req, s)) });
-});
+};
+app.get('/api/profile/sessions', requireSignedIn, listSessions);
 
 // One of them, by the id the list gave. This one is the same as signing
 // out.
-app.delete('/api/profile/sessions/:id', requireSignedIn, (req, res) => {
+const endOneSession = (req, res) => {
   const ended = store.endSessionOf(req.person.id, req.params.id);
   if (!ended) return res.status(404).json({ error: 'not found' });
   const current = ended.idHash === req.sess.idHash;
   if (current) signOut(req, res);
   res.json({ ok: true, current });
-});
+};
+app.delete('/api/profile/sessions/:id', requireSignedIn, endOneSession);
 
 // Every browser and app, this one included.
-app.post('/api/signout/everywhere', requireSignedIn, (req, res) => {
+const signOutEverywhere = (req, res) => {
   store.endSessionsOf(req.person.id);
   signOut(req, res);
   res.json({ ok: true });
-});
+};
+app.post('/api/signout/everywhere', requireSignedIn, signOutEverywhere);
 
 // A link sites can put behind their "Sign out". A GET, so it's only
 // honoured when the browser says it came from a Canopy page (or was typed
@@ -850,7 +863,7 @@ app.get('/signout', attachSession(false), (req, res) => {
 
 const REAUTH_MS = 15 * 60 * 1000;
 
-app.post('/api/auth/reauth/options', requireSignedIn, handle(async (req, res) => {
+const reauthOptions = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   const mine = store.passkeysOf(req.person.id);
@@ -859,9 +872,10 @@ app.post('/api/auth/reauth/options', requireSignedIn, handle(async (req, res) =>
   });
   store.setPending(req.sess.idHash, { challenge: options.challenge, kind: 'reauth', personId: req.person.id });
   res.json({ options });
-}));
+});
+app.post('/api/auth/reauth/options', requireSignedIn, reauthOptions);
 
-app.post('/api/auth/reauth/verify', requireSignedIn, handle(async (req, res) => {
+const reauthVerify = handle(async (req, res) => {
   const rpID = requirePasskeyRp(req, res);
   if (!rpID) return;
   const pending = store.takePending(req.sess.idHash);
@@ -888,7 +902,8 @@ app.post('/api/auth/reauth/verify', requireSignedIn, handle(async (req, res) => 
   store.usePasskey(passkey.id, result.authenticationInfo.newCounter);
   store.setReauth(req.sess.idHash, Date.now());
   res.json({ ok: true });
-}));
+});
+app.post('/api/auth/reauth/verify', requireSignedIn, reauthVerify);
 
 function recentlyReauthed(req) {
   return !!req.sess.reauthAt && Date.now() - req.sess.reauthAt < REAUTH_MS;
@@ -899,7 +914,7 @@ const REAUTH_REQUIRED = { error: 'confirm with your passkey first', reason: 'rea
 // The new address gets a code. One that's someone else's account is
 // refused without saying so -- "can't be used" -- so this isn't a way to
 // find out who else has an account.
-app.post('/api/profile/email/start', requireSignedIn, handle(async (req, res) => {
+const emailChangeStart = handle(async (req, res) => {
   if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
   const email = cleanEmail((req.body || {}).email);
   if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
@@ -915,9 +930,10 @@ app.post('/api/profile/email/start', requireSignedIn, handle(async (req, res) =>
     return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
   }
   res.json({ ok: true, email });
-}));
+});
+app.post('/api/profile/email/start', requireSignedIn, emailChangeStart);
 
-app.post('/api/profile/email/verify', requireSignedIn, handle(async (req, res) => {
+const emailChangeVerify = handle(async (req, res) => {
   if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
   const email = store.codeEmail(req.sess.idHash);
   if (!email) return res.status(400).json({ error: 'that code has run out -- send a new one', reason: 'expired' });
@@ -943,7 +959,8 @@ app.post('/api/profile/email/verify', requireSignedIn, handle(async (req, res) =
     console.error(`[canopy-account] the email-changed notice to the old address failed: ${err.message}`);
   }
   res.json(meView(req));
-}));
+});
+app.post('/api/profile/email/verify', requireSignedIn, emailChangeVerify);
 
 // ---------------- Proving your own email ----------------
 //
@@ -952,7 +969,7 @@ app.post('/api/profile/email/verify', requireSignedIn, handle(async (req, res) =
 // same codes and limits as signing in. Nothing else changes: their
 // passkeys are already the ones they signed in with.
 
-app.post('/api/profile/verify/start', requireSignedIn, handle(async (req, res) => {
+const verifyStart = handle(async (req, res) => {
   const email = req.person.email;
   if (req.person.emailVerifiedAt) return res.json({ ok: true, verified: true, email });
   if (codeSendLimits.blocked(req, email)) return tooMany(res);
@@ -965,9 +982,10 @@ app.post('/api/profile/verify/start', requireSignedIn, handle(async (req, res) =
     return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
   }
   res.json({ ok: true, verified: false, email });
-}));
+});
+app.post('/api/profile/verify/start', requireSignedIn, verifyStart);
 
-app.post('/api/profile/verify/check', requireSignedIn, (req, res) => {
+const verifyCheck = (req, res) => {
   const email = store.codeEmail(req.sess.idHash);
   // The code waiting here has to be for their own email (not one meant for
   // changing it).
@@ -987,7 +1005,8 @@ app.post('/api/profile/verify/check', requireSignedIn, (req, res) => {
   store.signIn(req.sess.idHash, person.id);
   req.person = store.getPerson(person.id);
   res.json(meView(req));
-});
+};
+app.post('/api/profile/verify/check', requireSignedIn, verifyCheck);
 
 // ---------------- Profile ----------------
 
@@ -1048,19 +1067,21 @@ function applyProfileChanges(id, changes) {
   return person;
 }
 
-app.patch('/api/profile', requireSignedIn, (req, res) => {
+const saveProfile = (req, res) => {
   const { changes, error } = profileChanges(req.body || {});
   if (error) return res.status(400).json(error);
   req.person = applyProfileChanges(req.person.id, changes);
   res.json(meView(req));
-});
+};
+app.patch('/api/profile', requireSignedIn, saveProfile);
 
-app.post('/api/profile/photo', requireSignedIn, photoUpload.single('photo'), (req, res) => {
+const savePhoto = (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'choose a photo' });
   photoStore.save(req.person.id, req.file.buffer);
   req.person = store.setPersonPhoto(req.person.id, Date.now());
   res.json(meView(req));
-});
+};
+app.post('/api/profile/photo', requireSignedIn, photoUpload.single('photo'), savePhoto);
 
 function passkeyView(k) {
   return {
@@ -1075,18 +1096,20 @@ function passkeyView(k) {
   };
 }
 
-app.get('/api/profile/passkeys', requireSignedIn, (req, res) => {
+const listPasskeys = (req, res) => {
   res.json({ passkeys: store.passkeysOf(req.person.id).map(passkeyView) });
-});
+};
+app.get('/api/profile/passkeys', requireSignedIn, listPasskeys);
 
-app.delete('/api/profile/passkeys/:id', requireSignedIn, (req, res) => {
+const removePasskey = (req, res) => {
   const result = store.removePasskey(req.person.id, req.params.id);
   if (result.ok) return res.json({ ok: true });
   if (result.reason === 'last_passkey') {
     return res.status(409).json({ error: "that's your only passkey -- add another first", reason: 'last_passkey' });
   }
   res.status(404).json({ error: 'not found' });
-});
+};
+app.delete('/api/profile/passkeys/:id', requireSignedIn, removePasskey);
 
 // Photos are for browsers signed in to a Canopy account, not the open
 // web. Canopy sites show them straight from here: an <img> on any Canopy
