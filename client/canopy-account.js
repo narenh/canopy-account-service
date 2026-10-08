@@ -11,10 +11,11 @@
 //   app.use(canopy.attach);                // req.person: the visitor, or null
 //   app.get('/mine', canopy.requireSignIn, ...);   // signed in, or off to sign in
 //   const people = await canopy.people(ids);       // Map of id -> { firstName, ... }
+//   const found = await canopy.lookup(req, { phone: '415 555 1234' });  // or { instagram }
 //
 // req.person is { id, email, emailVerified, firstName, lastName,
-// shortName, photoUrl, venmo, phone, instagram, cashapp }: the visitor's
-// own details, never to be shown to anyone else. photoUrl points at the
+// shortName, photoUrl, venmo, phone, instagram, cashapp, findable }: the
+// visitor's own details, never to be shown to anyone else. photoUrl points at the
 // account service and works straight in an <img> on any Canopy page (the
 // browser sends the cookie along).
 //
@@ -33,6 +34,10 @@
 // sign-out, a name change or a newly confirmed email can take that long to
 // show here. A person missing from people() has been deleted: show them
 // as a former member, keeping whatever this site recorded for them.
+//
+// Other people -- people() and lookup() -- are only ever { id, firstName,
+// lastName, shortName, photoUrl }. Never show one person another's email,
+// phone, Instagram, Venmo or Cash App: this site never gets them anyway.
 
 const crypto = require('crypto');
 
@@ -183,5 +188,39 @@ module.exports = function createCanopyAccount({ url, key, cacheMs = 60 * 1000 } 
     return found;
   }
 
-  return { attach, requireSignIn, people, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl };
+  function lookupError(status, reason, message) {
+    const err = new Error(message);
+    err.status = status;
+    err.reason = reason;
+    return err;
+  }
+
+  // The one person whose profile has exactly this phone number or
+  // Instagram, as { id, firstName, lastName, shortName, photoUrl }, or
+  // null. `query` is { phone } or { instagram }, as someone typed it (the
+  // account service cleans it the way the profile does). Asked as the
+  // visitor, who has to be signed in with a proven email, and only on a
+  // site the account admin lets look people up. Anything else rejects
+  // with an Error carrying `status` and `reason`: 401 signed_out, 403
+  // email_unverified or lookup_not_allowed, 400 bad_phone, bad_instagram
+  // or one_of, 429 rate_limited. Not cached.
+  async function lookup(req, query) {
+    const { token } = readToken(req);
+    if (!token) throw lookupError(401, 'signed_out', 'not signed in');
+    const q = query || {};
+    const params = new URLSearchParams();
+    if (q.phone != null && q.instagram == null) params.set('phone', String(q.phone));
+    else if (q.instagram != null && q.phone == null) params.set('instagram', String(q.instagram));
+    else throw lookupError(400, 'one_of', 'give one of phone or instagram');
+    // The visitor's address, for the per-address limit.
+    const ip = (typeof req.get === 'function' && req.get('cf-connecting-ip')) || req.ip || '';
+    const r = await fetch(`${base}/api/people/lookup?${params}`, {
+      headers: { ...headers, 'X-Canopy-Session': token, 'X-Canopy-Visitor-Ip': ip }
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw lookupError(r.status, body.reason, body.error || `account service answered ${r.status}`);
+    return body.person || null;
+  }
+
+  return { attach, requireSignIn, people, lookup, signInUrl, signOutUrl, quickSignUpUrl, verifyUrl };
 };

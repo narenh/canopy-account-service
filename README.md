@@ -16,7 +16,9 @@ is this**, **what's their name and photo**, and **are they signed in**.
   code, and only sites the admin marks as allowing it treat them as
   signed in until then (see "Quick sign-up").
 - At **`/profile`** they change their name, photo, phone, Instagram,
-  Venmo and Cash App, see their passkeys (add one, remove one they've
+  Venmo and Cash App, choose whether **people who know their phone number
+  or Instagram can find them** (on unless they turn it off), see their
+  passkeys (add one, remove one they've
   lost) and sign out. **Changing their email** takes three steps: their
   passkey (Face ID or the like, so a borrowed unlocked phone or a stolen
   cookie isn't enough; good for 15 minutes and one change), a code sent
@@ -34,12 +36,14 @@ is this**, **what's their name and photo**, and **are they signed in**.
   email isn't proven) and can **Edit profile** (every field above except
   the photo, plus the email: a changed email is unverified until its
   owner types a code sent there), reset passkeys, send a setup link or
-  delete; the **Sites** allowed to ask about people, each with a switch
-  for whether it **allows quick (unverified) accounts**; and the sign-in
+  delete; the **Sites** allowed to ask about people, each with switches
+  for whether it **allows quick (unverified) accounts** and whether it
+  **can find people by phone number or Instagram**; and the sign-in
   page's logo and backdrop (each can be removed again).
 - Every Canopy site asks it, server to server, who the visitor is
-  (`GET /api/session`) and what other people are called
-  (`GET /api/people`). `client/canopy-account.js` is the one file a site
+  (`GET /api/session`), what other people are called
+  (`GET /api/people`), and, if it's allowed to, who has a phone number or
+  Instagram someone typed (`GET /api/people/lookup`). `client/canopy-account.js` is the one file a site
   copies in to do that.
 
 Signing in on one Canopy site signs you in on all of them, because the
@@ -391,6 +395,7 @@ trusted for this.
 | Unknown setup links | | 40 per 15 min | |
 | Quick sign-up tries | 10 per browser per 15 min | 20 per hour | 200 per hour |
 | Quick accounts made | | 10 per hour | 50 per hour |
+| Lookups by phone or Instagram | 30 per asker per hour, 100 per day | 60 per hour | 300 per hour |
 
 On top of that, each code dies after 5 wrong tries.
 
@@ -409,6 +414,9 @@ than that are what the cap is for. Unverified accounts work only on the
 sites that allow them, so a junk one can do little. When the ceiling
 trips, quick sign-ups stop for everyone for that hour, and the page
 points them to signing up with an email and a code, which isn't affected.
+
+**Why those numbers for lookups.** See "Finding people by phone or
+Instagram".
 
 **What that means for one account.** With 5 codes an hour and 5 tries on
 each, someone going after one email gets **at most 25 guesses an hour**,
@@ -472,7 +480,8 @@ Signed in:
     "venmo": "ana-l",
     "phone": "+14155551234",
     "instagram": "ana.lima",
-    "cashapp": "AnaL"
+    "cashapp": "AnaL",
+    "findable": true
   },
   "renewCookie": "canopy_session=q3Xb...; Path=/; Domain=canopysf.com; HttpOnly; SameSite=Lax; Max-Age=31536000; Secure"
 }
@@ -513,7 +522,11 @@ the header, which `client/canopy-account.js` does.
 all set on the profile page. `phone` is E.164 (`+` and the country code;
 US and Canadian numbers are typed without the +1). `instagram`, `venmo`
 and `cashapp` come without their `@` or `$`; Instagram names are
-lowercased, since Instagram ignores case. Answers are `Cache-Control: no-store`.
+lowercased, since Instagram ignores case. `findable` is their "Let people
+who know your phone number or Instagram find you". This is the one
+answer with contact details in it, and they're the visitor's own: a site
+shows them to that visitor and nobody else. Answers are `Cache-Control:
+no-store`.
 
 ### `GET /api/people?ids=…`: everyone else
 
@@ -545,6 +558,41 @@ App, and without whether their email is proven. **An id that's missing
 from the answer is a deleted account**: the site shows them as a former
 member and keeps whatever it recorded for them.
 
+### `GET /api/people/lookup?phone=…` or `?instagram=…`: finding someone
+
+For a site the admin has switched on (**Can find people by phone number
+or Instagram**), asked as a visitor: the site passes the visitor's
+session in `X-Canopy-Session` exactly as for `/api/session`, and their
+address in `X-Canopy-Visitor-Ip` (for the per-address limit; without it
+the site's own address counts).
+
+```http
+GET /api/people/lookup?phone=(415)%20555-1234 HTTP/1.1
+Authorization: Bearer cnp_8vD...
+X-Canopy-Session: q3Xb...the visitor's canopy_session value
+X-Canopy-Visitor-Ip: 203.0.113.7
+```
+
+```json
+{
+  "person": {
+    "id": "6f1c2b9e-4d0a-4a53-9a51-2f7e0c1d8b44",
+    "firstName": "Ana",
+    "lastName": "Lima",
+    "shortName": "Ana L",
+    "photoUrl": null
+  }
+}
+```
+
+or `{"person": null}` when nobody is found. Refusals: `403
+lookup_not_allowed` (the site isn't switched on), `401 signed_out` (no
+signed-in visitor), `403 email_unverified` (the visitor hasn't proven
+their email), `400 one_of` (not exactly one of `phone` and `instagram`),
+`400 bad_phone` / `400 bad_instagram` (it can't be one), `429
+rate_limited`. See "Finding people by phone or Instagram" for what it
+matches and why.
+
 ### Using `client/canopy-account.js`
 
 Copy the file into the site (it has no dependencies; Node 18+ for
@@ -563,6 +611,7 @@ app.set('trust proxy', true);
 app.use(canopy.attach);                         // req.person: the visitor, or null
 app.get('/mine', canopy.requireSignIn, ...);    // signed in, or off to sign in and back
 const people = await canopy.people(ids);        // Map of id -> { firstName, shortName, photoUrl, ... }
+const found = await canopy.lookup(req, { phone: '(415) 555-1234' });  // or { instagram: '@ana.lima' }
 // For links, each coming back to returnTo (this page by default):
 // canopy.signInUrl(req, returnTo), canopy.signOutUrl(req, returnTo),
 // canopy.quickSignUpUrl(req, returnTo), canopy.verifyUrl(req, returnTo)
@@ -592,6 +641,15 @@ const people = await canopy.people(ids);        // Map of id -> { firstName, sho
   for apps yet to hand one out (see above).
 - `attach` passes `renewCookie` on to the visitor by itself, for a cookie
   only. Nothing is ever sent back as `Set-Cookie` for a bearer request.
+- `lookup(req, { phone } | { instagram })` resolves to the one person
+  with exactly that, in the same shape as `people()`, or `null`. It asks
+  as the visitor on `req` (cookie or bearer) and passes their address
+  along. A refusal rejects with an `Error` carrying `status` and `reason`
+  (the reasons above). It isn't cached.
+- **Other people are only ever `{ id, firstName, lastName, shortName,
+  photoUrl }`.** `people()` and `lookup()` give nothing else, and a site
+  should never show one person another's email, phone, Instagram, Venmo
+  or Cash App (it doesn't have them to show).
 - `quickSignUpUrl` is only worth linking from a site that allows
   unverified accounts. Anywhere else the account it makes counts as
   signed out until it's verified.
@@ -610,6 +668,75 @@ const people = await canopy.people(ids);        // Map of id -> { firstName, sho
   day-long private cache never shows an old one.
 - For "Sign out", link to `canopy.signOutUrl(req)`. That signs the
   browser out of every Canopy site and comes back.
+
+## Finding people by phone or Instagram
+
+Hosts on a Canopy site (events, first) want to invite someone whose
+number or Instagram they already have. People fill both in on their
+profile, so this service can say whose they are, without ever handing
+them out.
+
+**The rule: it's one-way.** Knowing someone's number or handle finds
+their account. Their account never gives up their contact details:
+nothing here gives one person's email, phone, Instagram, Venmo or Cash
+App to another person or to a site, except `/api/session` (which
+describes the visitor themself) and the admin's pages. `/api/people` and
+the lookup answer with the public shape, `{id, firstName, lastName,
+shortName, photoUrl}`, and nothing else, not even the number that was
+asked about, and not whether that person's email is proven (no site
+needs it to show a name). In `server.js` that shape is
+`publicPersonView`, and `test/privacy.test.js` walks every answer another
+person or a site can get and fails if any of someone else's contact
+details turns up.
+
+How the lookup works (`GET /api/people/lookup`, above):
+
+- **Exact matches only.** What's typed is cleaned exactly the way the
+  profile cleans it (`cleanPhone`: E.164, +1 when there's no country
+  code; `cleanInstagram`: lowercase, no @, a pasted link trimmed to the
+  name) and compared with what's stored. Never a prefix, never anything
+  fuzzy, so there's nothing to browse. Part of a number isn't a valid
+  number, so it's refused as one.
+- **One answer or none.** If two accounts have typed in the same number
+  or handle, the answer is `null`. Neither is proven to own it, so either
+  answer could be the wrong person, and inviting the wrong person is worse
+  than not finding the right one. The cost: someone can hide another
+  person from the lookup by claiming their handle. A miss says nothing
+  about why.
+- **Only for verified askers, on switched-on sites.** The site has to be
+  marked **Can find people by phone number or Instagram** in the Sites
+  tab (off by default), and the asker has to be signed in there with a
+  proven email. The limits are per asker, so an asker has to be someone,
+  and an unverified account is too cheap to make for that to mean much.
+- **Unverified accounts can be found.** A phone number or handle is typed
+  in by its owner and proven by nothing, for every account alike. A proven
+  email says nothing about the phone, so it would be a false distinction.
+  Being found only lets a host invite them, and unverified accounts can
+  be invited on events.
+- **Nobody who turned it off.** The profile's "Let people who know your
+  phone number or Instagram find you" is **on** by default. It's on
+  because the lookup gives away nothing but the name and photo that
+  anyone at the same event already sees, and only to someone who already
+  has the number. Most people expect a friend with their number to be
+  able to invite them, and off by default would make the feature
+  useless for the people who never open their profile. Anyone who'd
+  rather not turns it off. To flip the default, change
+  `FINDABLE_BY_DEFAULT` in `lib/db.js`; it applies to accounts made from
+  then on (version 6 gave everyone already here the same default).
+
+**Limits.** Phone numbers can be listed by brute force. An area code is
+only ten million of them, so whoever can ask fast enough could map
+numbers to names. Every lookup counts, found or not:
+
+- **30 an hour and 100 a day per asker.** A host inviting people one by
+  one does a handful. Someone typing in a whole party's numbers might hit
+  30 in an hour; the rest can wait an hour, or come from the friends list.
+- **60 an hour per address** (the visitor's, passed by the site), so a
+  few accounts on one connection don't add up to much more.
+- **300 an hour across everyone.** That's at most 7,200 numbers a day,
+  however many verified accounts someone has, or over three years for one
+  area code. Like the other ceilings, it trips for everyone: someone who
+  uses it up stops lookups for that hour.
 
 ## Running locally
 
@@ -767,7 +894,9 @@ newer code is refused rather than opened with columns this code doesn't
 know about. Version 5 added quick sign-ups: everyone already in the
 database counts as verified (including anyone whose email the admin had
 changed, which until then changed nothing), and every site starts with
-unverified accounts not allowed.
+unverified accounts not allowed. Version 6 added the lookup: everyone
+already here gets `FINDABLE_BY_DEFAULT`, and no site may look people up
+until the admin switches it on.
 
 **Backups.** Two layers, the same as tickets:
 
