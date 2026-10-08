@@ -40,7 +40,7 @@ const COPY = {
     mailFailed: "Couldn't send the email. Try again in a minute.",
     // A new account.
     profileHeading: 'Create Account',
-    signUpHint: 'Your phone will offer to save a passkey, which will serve as both your username and password to sign in.',
+    signUpHint: 'Your phone will offer to save a passkey, which will serve as both your username and password.',
     // An email that already has an account.
     welcomeBack: 'Welcome back, {name}',
     existingHint: "Save a passkey on this phone and you're in. It'll work on every Canopy site.",

@@ -104,6 +104,9 @@ body.centered{display:flex;align-items:center;justify-content:center;}
 .site-logo ~ h1{display:none;}
 h1{font-size:20px;margin:0 0 6px;text-align:center;}
 h2{font-size:19px;margin:0 0 4px;text-align:center;}
+/* A form that starts with its fields (quick sign-up) needs the room a
+   hint paragraph would otherwise give the heading. */
+h2 + .name-row, h2 + input{margin-top:16px;}
 p{
   margin:0 0 20px;
   color:var(--muted);
