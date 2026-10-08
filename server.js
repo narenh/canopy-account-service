@@ -6,7 +6,19 @@ const multer = require('multer');
 const webauthn = require('@simplewebauthn/server');
 
 const db = require('./lib/db');
-const store = db.init();
+
+// The database, with contact details encrypted under the keys in the
+// environment (lib/contactCrypto.js). A database those keys can't be right
+// for stops the server here, saying what to do, rather than serving people
+// with their details missing (lib/db.js, checkKeys).
+let store;
+try {
+  store = db.init();
+} catch (err) {
+  if (err.code !== 'CANOPY_STARTUP') throw err;
+  console.error(`[canopy-account] not starting: ${err.message}`);
+  process.exit(1);
+}
 const photoStore = require('./lib/photoStore');
 const { createImageStore } = require('./lib/uploadedImage');
 const session = require('./lib/session');
@@ -510,7 +522,9 @@ async function registrationOptions(rpID, { userId, email, displayName, existing 
     rpName: PASSKEY_RP_NAME,
     rpID,
     userID: new TextEncoder().encode(userId),
-    userName: email,
+    // The email, which is what the phone shows the passkey under. An email
+    // that can't be read (its key was lost) falls back to the name.
+    userName: email || displayName,
     userDisplayName: displayName,
     attestationType: 'none',
     excludeCredentials: (existing || []).map((k) => ({ id: k.id, transports: k.transports })),
@@ -664,7 +678,7 @@ const registerExisting = handle(async (req, res) => {
   const person = store.getPersonByEmail(email);
   if (!person) return res.status(404).json({ error: 'not found', reason: 'not_found' });
   const options = await registrationOptions(rpID, {
-    userId: person.id, email: person.email, displayName: `${person.firstName} ${person.lastName}`,
+    userId: person.id, email, displayName: `${person.firstName} ${person.lastName}`,
     existing: store.passkeysOf(person.id)
   });
   store.setPending(req.sess.idHash, {
@@ -838,15 +852,19 @@ const registerVerify = handle(async (req, res) => {
     quickMadeLimits.hit(req);
     personId = made.person.id;
   } else if (mode === 'existing') {
-    const person = store.getPerson(personId);
-    // The proven email still has to be this person's.
-    if (!person || store.verifiedEmail(req.sess.idHash) !== person.email) return res.status(400).json(EXPIRED);
+    // The proven email still has to be this person's (by its keyed hash,
+    // which works even for an email whose key was lost: see below).
+    const proven = store.verifiedEmail(req.sess.idHash);
+    const owner = store.getPersonByEmail(proven);
+    if (!owner || owner.id !== personId) return res.status(400).json(EXPIRED);
     // The code proved the email, so the account is verified now -- and if
     // it wasn't before, it's this inbox's owner's alone, with what its maker
     // typed in cleared (lib/db.js). The answer says so (`tookOver`), and the
     // page goes on to the profile so the owner can check the name, which is
     // still the maker's.
-    const proved = store.addPasskeyProvingEmail(personId, cred, req.sess.idHash);
+    // The proven address is sealed again too, which brings back an email
+    // that read as empty because its key was lost.
+    const proved = store.addPasskeyProvingEmail(personId, cred, req.sess.idHash, proven);
     if (!proved.ok) return res.status(400).json(EXPIRED);
     if (proved.tookOver) {
       try { photoStore.remove(personId); } catch (e) {}
@@ -1102,7 +1120,8 @@ const emailChangeVerify = handle(async (req, res) => {
   store.signIn(req.sess.idHash, req.person.id);
   req.person = store.getPerson(req.person.id);
   try {
-    await mailer.sendEmailChanged(oldEmail, req.person.email, emailLogoUrl(req));
+    // No notice when the old address can't be read (its key was lost).
+    if (oldEmail) await mailer.sendEmailChanged(oldEmail, req.person.email, emailLogoUrl(req));
   } catch (err) {
     console.error(`[canopy-account] the email-changed notice to the old address failed: ${err.message}`);
   }
@@ -1120,6 +1139,9 @@ app.post('/api/profile/email/verify', requireSignedIn, emailChangeVerify);
 const verifyStart = handle(async (req, res) => {
   const email = req.person.email;
   if (req.person.emailVerifiedAt) return res.json({ ok: true, verified: true, email });
+  // Only if its key was lost (see "Contact details at rest"): signing in
+  // with a code to the address brings it back.
+  if (!email) return res.status(409).json({ error: 'sign in with a code to your email to confirm it', reason: 'email_unreadable' });
   if (codeSendLimits.blocked(req, email)) return tooMany(res);
   codeSendLimits.hit(req, email);
   const code = store.issueEmailCode(req.sess.idHash, email);

@@ -8,16 +8,21 @@ const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { init, SCHEMA_VERSION, FINDABLE_BY_DEFAULT } = require('../lib/db');
+const { createContactCrypto } = require('../lib/contactCrypto');
+
+const contactCrypto = createContactCrypto({ keys: [{ id: 'k1', key: Buffer.alloc(32, 7) }], hmacKey: Buffer.alloc(32, 8) });
 
 test('a version 1 database is brought up to date', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canopy-schema-test-'));
   const file = path.join(dir, 'account.db');
   try {
     // Make a version 1 database: today's, without what versions 2 and up added.
-    init({ file, snapshots: false }).db.close();
+    init({ file, snapshots: false, contactCrypto }).db.close();
     const old = new Database(file);
-    old.exec('DROP INDEX people_phone');
-    old.exec('DROP INDEX people_instagram');
+    ['email', 'phone', 'instagram'].forEach((c) => {
+      old.exec(`DROP INDEX people_${c}_hash`);
+      old.exec(`ALTER TABLE people DROP COLUMN ${c}_hash`);
+    });
     ['phone', 'instagram', 'cashapp'].forEach((c) => old.exec(`ALTER TABLE people DROP COLUMN ${c}`));
     old.exec('ALTER TABLE sessions DROP COLUMN reauth_at');
     old.exec('ALTER TABLE apps DROP COLUMN allows_unverified');
@@ -37,7 +42,7 @@ test('a version 1 database is brought up to date', () => {
     old.pragma('user_version = 1');
     old.close();
 
-    const store = init({ file, snapshots: false });
+    const store = init({ file, snapshots: false, contactCrypto });
     assert.equal(store.db.pragma('user_version', { simple: true }), SCHEMA_VERSION);
     assert.equal(store.getPerson('p1').phone, null);
     assert.equal(store.setPersonPhone('p1', '+14155551234').phone, '+14155551234');
@@ -53,7 +58,7 @@ test('a version 1 database is brought up to date', () => {
     // Version 6: everyone gets the findable default; no site may look up.
     assert.equal(store.getPerson('p1').findable, FINDABLE_BY_DEFAULT);
     assert.equal(store.listApps()[0].allowsLookup, false);
-    assert.ok(store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'people_phone'").get());
+    assert.ok(store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'people_phone_hash'").get());
     store.setPersonPhone('p1', '+14155551234');
     assert.equal(store.findPerson({ phone: '+14155551234' }).id, 'p1');
     // Version 7: every signed-in session already here is a browser's,
