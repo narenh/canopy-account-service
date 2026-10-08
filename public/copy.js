@@ -98,7 +98,8 @@ const COPY = {
     changeEmailAddressHint: "Your new email. We'll send a code to it, and tell your old one about the change.",
     changeEmailSend: 'Send code',
     sameEmail: "That's already your email.",
-    emailUnavailable: "That email can't be used.",
+    // Only after the code: whoever typed it owns the inbox.
+    emailUnavailable: 'That email already has a Canopy account. Sign in with it to use that one.',
     emailChanged: 'Email changed.',
     firstName: 'First name',
     lastName: 'Last name',

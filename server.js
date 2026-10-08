@@ -389,12 +389,16 @@ app.get('/api/me', attachSession(false), me);
 //   tries are counted: 10 per browser per 15 minutes, 20 per address and
 //   200 across everyone an hour. Accounts actually made: 10 per address
 //   and 50 across everyone an hour.
+// - Changing your email: 5 new addresses per person an hour, on top of the
+//   code-sending limits (each try sends an email). Someone changing their
+//   email does it once, or twice after a typo.
 const codeSendLimits = guessLimits({ perWho: [5, 60 * 60 * 1000], perIp: [20, 60 * 60 * 1000], overall: [100, 60 * 60 * 1000] });
 const codeGuessLimits = guessLimits({ perWho: [10, 15 * 60 * 1000], perIp: [40, 15 * 60 * 1000], overall: [300, 60 * 60 * 1000] });
 const setupPasswordLimits = guessLimits({ perWho: [8, 15 * 60 * 1000], perIp: [40, 15 * 60 * 1000], overall: [100, 60 * 60 * 1000] });
 const setupLinkIpLimiter = attemptLimiter(40, 15 * 60 * 1000);
 const quickTryLimits = guessLimits({ perWho: [10, 15 * 60 * 1000], perIp: [20, 60 * 60 * 1000], overall: [200, 60 * 60 * 1000] });
 const quickMadeLimits = guessLimits({ perIp: [10, 60 * 60 * 1000], overall: [50, 60 * 60 * 1000] });
+const emailChangeLimiter = attemptLimiter(5, 60 * 60 * 1000);
 
 function tooMany(res) {
   return res.status(429).json({ error: 'too many tries -- wait a few minutes', reason: 'rate_limited' });
@@ -975,20 +979,28 @@ function recentlyReauthed(req) {
 
 const REAUTH_REQUIRED = { error: 'confirm with your passkey first', reason: 'reauth_required' };
 
-// The new address gets a code. One that's someone else's account is
-// refused without saying so -- "can't be used" -- so this isn't a way to
-// find out who else has an account.
+// The new address gets a code -- or, if it's already someone's account,
+// a short notice instead (someone tried to move an account there, and
+// nothing changed). Either way the answer is the same, and so is the work
+// behind it: one email sent, and a code waiting on this session. So this
+// is no way to find out who has an account. Only the code step says the
+// address is taken, and the code only ever went to that inbox, so whoever
+// types it already knew. Every try is counted before anything is looked
+// up: per person, and the code-sending limits (per email, per address,
+// and the ceiling).
 const emailChangeStart = handle(async (req, res) => {
   if (!recentlyReauthed(req)) return res.status(403).json(REAUTH_REQUIRED);
   const email = cleanEmail((req.body || {}).email);
   if (!email) return res.status(400).json({ error: 'enter a valid email', reason: 'bad_email' });
   if (email === req.person.email) return res.status(400).json({ error: "that's already your email", reason: 'same_email' });
-  if (store.getPersonByEmail(email)) return res.status(409).json({ error: "that email can't be used", reason: 'email_unavailable' });
-  if (codeSendLimits.blocked(req, email)) return tooMany(res);
+  if (emailChangeLimiter.blocked(req.person.id) || codeSendLimits.blocked(req, email)) return tooMany(res);
+  emailChangeLimiter.hit(req.person.id);
   codeSendLimits.hit(req, email);
   const code = store.issueEmailCode(req.sess.idHash, email);
+  const taken = !!store.getPersonByEmail(email);
   try {
-    await mailer.sendCode(email, code, emailLogoUrl(req));
+    if (taken) await mailer.sendAddressInUse(email, emailLogoUrl(req));
+    else await mailer.sendCode(email, code, emailLogoUrl(req));
   } catch (err) {
     console.error(`[canopy-account] sending a code failed: ${err.message}`);
     return res.status(502).json({ error: "couldn't send the email", reason: 'mail_failed' });
@@ -1009,8 +1021,11 @@ const emailChangeVerify = handle(async (req, res) => {
     return res.status(403).json({ error: "that isn't the code", reason: 'wrong_code' });
   }
   const oldEmail = req.person.email;
+  // Taken: by someone else's account all along (then no code was ever
+  // sent there, and this was a lucky guess), or in the meantime. Saying so
+  // tells the inbox's owner nothing they don't know.
   const changed = store.setPersonEmail(req.person.id, result.email);
-  if (!changed.ok) return res.status(409).json({ error: "that email can't be used", reason: 'email_unavailable' });
+  if (!changed.ok) return res.status(409).json({ error: 'that email already has an account', reason: 'email_unavailable' });
   store.markEmailVerified(req.person.id);
   // One change per passkey check, and the proven address isn't left
   // lying around on the session for a sign-up.

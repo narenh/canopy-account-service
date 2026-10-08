@@ -27,9 +27,10 @@ is this**, **what's their name and photo**, and **are they signed in**.
   to the new address and typed back, and then a notice to the old
   address with the new one masked (`a•••@domain`), the only warning its
   owner gets if it wasn't them. A new address that already has an
-  account just "can't be used". An unverified account gets a banner that
-  can't be closed, with **Confirm email** (a code sent there, typed
-  back). `/profile?verify=1&return=…` opens straight into that and goes
+  account answers exactly like one that doesn't (see "With an email and
+  a code"), and only the code step says it's taken. An unverified
+  account gets a banner that can't be closed, with **Confirm email** (a
+  code sent there, typed back). `/profile?verify=1&return=…` opens straight into that and goes
   back afterwards. The admin lands on the Account Manager
   after signing in, with **My Profile** to their own and **Back to
   manager** from it.
@@ -62,7 +63,8 @@ on the browser sharing one cookie between them. (The apps get a token,
 but it's the same session a cookie names, for Canopy's own apps only.) There are no passwords
 for anyone (the one setup password is for the admin and the server, see
 "The first admin"). The only emails it sends are sign-in codes and, when
-someone changes their email, a notice to the old address. It doesn't
+someone changes their email, a notice to the old address (or, for an
+address that already has an account, a notice there instead of a code). It doesn't
 hold any site's own data either: tickets' seats, orders and calendar
 feeds stay in tickets, keyed by the person ids from here.
 
@@ -93,8 +95,9 @@ feeds stay in tickets, keyed by the person ids from here.
 - `lib/limits.js` holds the in-memory try counters behind the guess
   limits, and `clientIp()`, the visitor's address (Cloudflare's
   `CF-Connecting-IP` when it's there).
-- `lib/mailer.js` sends the code email over SMTP (iCloud Mail, see
-  "Email: iCloud SMTP"). Everything about mail is in this one file, so
+- `lib/mailer.js` sends the code email and the two email-change notices
+  over SMTP (iCloud Mail, see "Email: iCloud SMTP"). Everything about
+  mail is in this one file, so
   moving to another provider means changing this file and the `SMTP_*`
   settings.
 - `lib/photoStore.js` stores profile photos, one square JPEG per person
@@ -167,6 +170,30 @@ an account, sign in instead". That tells anyone who tries an email
 whether it has a Canopy account. We accept that leak in exchange for a
 sign-up with no code. The tries are counted and limited (see "Guess
 limits"), so it can't be run down a long list of emails.
+
+**Changing an email holds to it.** Someone signed in who changes their
+email to an address that already has an account gets exactly the answer
+anyone else gets (`200`, "we sent a code"), from exactly the same work:
+the try is counted, a code is set up on their session, and one email
+goes out. For an address with no account that email is the code. For one
+with an account it's a short notice instead ("someone tried to change
+their Canopy account's email to this one; this email already has an
+account, so nothing was changed"), with no code in it. Only the code
+step says the address is taken (`409 email_unavailable`), and the code
+only ever went to that inbox, so whoever can type it is its owner and
+already knew. This used to answer `409 "can't be used"` straight away,
+before any limit, which made one passkey check good for 15 minutes of
+unlimited "does this email have an account?" questions.
+
+Why a notice rather than sending nothing: sending nothing would be
+quicker to answer than an SMTP round trip, and that difference in timing
+could say what the answer doesn't. With a notice the work is one email
+either way, and a mail outage fails both the same way (`502`). It also
+tells the address's owner that someone tried, and if that was them (with
+two accounts), why nothing happened. It can't be used to flood an inbox:
+it's counted with the codes, 5 an hour per address (see "Guess limits"),
+the same as anyone can already send by typing that address on the
+sign-in page.
 
 - A code is good for **10 minutes** and **5 wrong tries**, after which
   only a new code works. Sending a new one replaces the old one on that
@@ -578,6 +605,7 @@ trusted for this.
 | Unknown setup links | | 40 per 15 min | |
 | Quick sign-up tries | 10 per browser per 15 min | 20 per hour | 200 per hour |
 | Quick accounts made | | 10 per hour | 50 per hour |
+| Changing your email (new addresses) | 5 per person per hour | (the code limits) | (the code limits) |
 | Lookups by phone or Instagram | 30 per asker per hour, 100 per day | 60 per hour | 300 per hour |
 
 On top of that, each code dies after 5 wrong tries. The apps count in
@@ -602,6 +630,15 @@ than that are what the cap is for. Unverified accounts work only on the
 sites that allow them, so a junk one can do little. When the ceiling
 trips, quick sign-ups stop for everyone for that hour, and the page
 points them to signing up with an email and a code, which isn't affected.
+
+**Why those numbers for changing your email.** Every new address tried
+is counted, before anything is looked up, against the person (5 an hour)
+and against the code limits (that address, the network address, and the
+ceiling), since each one sends an email. Someone changing their email
+does it once, or twice after a typo. The answer is the same whether the
+address has an account or not (see "With an email and a code"), so the
+limit isn't what keeps that secret. It's there so a signed-in account
+can't be used to send many emails.
 
 **Why those numbers for lookups.** See "Finding people by phone or
 Instagram".

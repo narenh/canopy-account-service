@@ -513,7 +513,10 @@ paths:
     post:
       tags: [Email]
       summary: Change the email, step 1 (a code to the new address)
-      description: Counted with the other codes.
+      description: |
+        Counted with the other codes, and 5 new addresses per person an
+        hour. An address that already has an account answers the same way
+        (its owner gets a notice instead of a code); only step 2 says so.
       operationId: emailChangeStart
       requestBody:
         required: true
@@ -546,11 +549,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '409':
-          description: '`email_unavailable`: it can''t be used (said the same way whatever the reason).'
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '502': { $ref: '#/components/responses/MailFailed' }
 
@@ -571,7 +569,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: '`email_unavailable`.'
+          description: '`email_unavailable`: the new email has an account.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

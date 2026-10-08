@@ -244,7 +244,12 @@ test('apps, end to end', async (t) => {
     assert.equal(start.data.options.userVerification, 'required');
     const response = ana.authenticator.authenticate(start.data.options, ana.origin);
     assert.equal((await ana.post('/me/reauth/verify', { response })).status, 200);
-    assert.equal((await ana.post('/me/email/start', { email: 'host@example.com' })).data.reason, 'email_unavailable');
+    // An address with an account answers like any other (see
+    // email-change.test.js), and its owner gets a notice, not a code.
+    const taken = await ana.post('/me/email/start', { email: 'host@example.com' });
+    assert.equal(taken.status, 200, taken.text);
+    assert.deepEqual(taken.data, { ok: true, email: 'host@example.com' });
+    assert.match(server.output(), /address-in-use notice for host@example\.com/);
     assert.equal((await ana.post('/me/email/start', { email: 'Ana.New@example.com' })).status, 200);
     const done = await ana.post('/me/email/verify', { code: server.lastCode('ana.new@example.com') });
     assert.equal(done.status, 200, done.text);

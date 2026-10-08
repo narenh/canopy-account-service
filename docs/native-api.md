@@ -512,11 +512,13 @@ old one.
 2. `POST /me/email/start` with `{"email": "ana.new@example.com"}` sends
    a code there and answers `{"ok": true, "email": "ana.new@example.com"}`.
    `403 reauth_required` (step 1 first, or again), `400 same_email`,
-   `409 email_unavailable` (it can't be used, said the same way whatever
-   the reason, so it's no way to find out who has an account).
+   `429 rate_limited` (5 new addresses an hour). An address that already
+   has an account answers the same way: its owner gets a notice instead
+   of a code, so this is no way to find out who has an account.
 3. `POST /me/email/verify` with `{"code": "123456"}` answers
    `{"person": ...}` with the new email, verified. The old address gets
-   a notice.
+   a notice. `409 email_unavailable` if the address has an account (which
+   only its owner, who got no code, could be told).
 
 ## Where they're signed in, and signing out
 
@@ -586,7 +588,7 @@ over.
 | 409 | `conflict` | The email got an account in the meantime | Sign in instead |
 | 409 | `passkey_exists` | That passkey is already saved | |
 | 409 | `last_passkey` | It's their only passkey | Add another first |
-| 409 | `email_unavailable` | The new email can't be used | Ask for another |
+| 409 | `email_unavailable` | At the code step: the new email has an account | Ask for another |
 | 429 | `rate_limited` | Too many tries | Wait a few minutes |
 | 502 | `mail_failed` | The email couldn't be sent | Try again later |
 
