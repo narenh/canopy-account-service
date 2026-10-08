@@ -82,10 +82,15 @@ feeds stay in tickets, keyed by the person ids from here.
 - `lib/db.js` is persistence: one SQLite file, `DATA_DIR/account.db`.
   Its tables are `people`, `passkeys`, `sessions` (one per browser, keyed
   by the hash of its cookie), `setup_links` (hashed), `apps` (the sites,
-  with hashed keys) and `meta` (who the admin is). The schema version
+  with hashed keys) and `meta` (who the admin is). Every contact detail in
+  it is encrypted, here and nowhere else (see "Contact details at
+  rest"). The schema version
   lives in SQLite's `user_version`. A database from a version this code
   doesn't know is refused at startup rather than opened. It also takes
   the daily snapshots (see "Storage & backups").
+- `lib/contactCrypto.js` seals and opens contact details (AES-256-GCM)
+  and makes the keyed hashes they're looked up by, from
+  `CONTACT_ENCRYPTION_KEYS` and `LOOKUP_HMAC_KEY`.
 - `lib/session.js` is the `canopy_session` cookie: reading it, the
   `Set-Cookie` that makes or renews it, and when it's due for renewal.
   It also reads an app's `Authorization: Bearer` token, and names a
@@ -416,7 +421,8 @@ something. With the plain token in it, any of those copies would be a
 pocketful of working sign-ins. With the hash, it's useless for that,
 because there's no getting from the hash back to the cookie. The same
 goes for the other secrets: setup link codes, site keys and emailed
-codes are all stored as hashes.
+codes are all stored as hashes. Contact details, which have to be read
+back, are encrypted instead (see "Contact details at rest").
 
 **Every Canopy site's server sees the cookie.** It's sent to all of
 `canopysf.com`, and the sites pass it on to `/api/session`. That's fine
@@ -1022,7 +1028,8 @@ How the lookup works (`POST /api/people/lookup`, above):
 - **Exact matches only.** What's typed is cleaned exactly the way the
   profile cleans it (`cleanPhone`: E.164, +1 when there's no country
   code; `cleanInstagram`: lowercase, no @, a pasted link trimmed to the
-  name) and compared with what's stored. Never a prefix, never anything
+  name) and its keyed hash compared with the stored one's (see "Contact
+  details at rest": the stored value itself is encrypted). Never a prefix, never anything
   fuzzy, so there's nothing to browse. Part of a number isn't a valid
   number, so it's refused as one.
 - **One answer or none.** If two accounts have typed in the same number
@@ -1099,6 +1106,187 @@ numbers to names. Every lookup counts, found or not:
   area code. Like the other ceilings, it trips for everyone: someone who
   uses it up stops lookups for that hour.
 
+## Contact details at rest
+
+Everyone's email, phone number, Instagram, Venmo and Cash App is
+**encrypted in `account.db`**, and so are the email and sign-up details a
+session holds for the few minutes a sign-in takes. Names, photos,
+passkeys and everything else aren't: names and photos are shown to
+everyone at the same event anyway, and the rest is already hashes or
+public keys.
+
+### What this protects, and what it doesn't
+
+**It protects copies of the database.** A copy of `account.db` gets made
+all the time: the daily snapshots, Coolify's volume backups (and the S3
+bucket they may go to), a file pulled down to look at something, a disk
+that's thrown away. Before this, every one of those was a list of
+everyone's email, phone number and Instagram, with their names. Now
+they're ciphertext, and a copy alone gives up none of them.
+
+**It doesn't protect against anyone on the live server.** The keys are in
+the service's environment, so whoever can read that (Coolify's
+environment variables, a shell in the container, the running process)
+can read everything, exactly as the service itself does. Nor does it
+change what the service gives out: the admin's pages, `/api/session` for
+a site that's granted a field, and someone's own profile all show the
+details decrypted, as before. It's a lock on the copies, not on the
+house.
+
+### Email is encrypted too
+
+Email was the hard call. It's looked up by exact value all over: signing
+in by code, whether an address already has an account (quick sign-up,
+changing your email, the admin's edit), and its uniqueness. So it's
+encrypted **and** has a keyed hash beside it (`email_hash`, with the
+unique index), which is what all of those use. Encrypting only the
+phone, Instagram, Venmo and Cash App would have been simpler, but a leaked
+copy would still have been a list of every name and email address here,
+which is the most useful part of it to a spammer or a phisher. The cost
+is that the email depends on the key like the rest, which the backup
+plan below covers. The keyed hash is also what lets an email come back
+if the key is lost.
+
+### How
+
+- **Sealed values** are `v1:<keyId>:<nonce>:<ciphertext and tag>` (the
+  last two base64url): AES-256-GCM with a fresh random 12-byte nonce for
+  every value, so the same phone number twice is two different strings.
+  What kind of value it is (`email`, `phone`, ...) is GCM's additional
+  data, so a value moved into another column won't open. `keyId` says
+  which key sealed it, which is what makes rotation possible.
+- **Lookup hashes**, `email_hash`, `phone_hash` and `instagram_hash`:
+  HMAC-SHA256 under a separate key, `LOOKUP_HMAC_KEY`, of exactly the
+  cleaned value the profile stores (`+14155551234`, `ana.lima`,
+  `ana@example.com`). The lookup cleans what's typed the same way and
+  hashes it, so it still matches exactly and only exactly, and "more than
+  one account claims this" is counted on the hashes without decrypting
+  anyone. A hash can't be checked against a guess without the key. With
+  the key, it can, and phone numbers are few enough to try them all: that
+  is the same line as above, the live server.
+- Everything is sealed and opened in `lib/db.js` and nowhere else; the
+  rest of the code only ever sees plain values.
+- **No plain text left in the file.** The database runs with SQLite's
+  `secure_delete`, so a value that's changed or deleted is overwritten,
+  not left in free space for a copy to carry, and the upgrade that first
+  sealed everything rebuilds the file (`VACUUM`) afterwards.
+
+### The keys
+
+Two environment variables, each base64 of 32 random bytes
+(`openssl rand -base64 32` makes one):
+
+- `CONTACT_ENCRYPTION_KEYS`: `<id>:<key>`, comma-separated. The **first
+  one encrypts**; any of them decrypts. The id is yours to choose
+  (letters, digits, `-`, `_`), e.g. the year: `k2026:9Gx...=`.
+- `LOOKUP_HMAC_KEY`: the key for the lookup hashes.
+
+**Setting them up on Coolify:**
+
+1. On your own computer, run `openssl rand -base64 32` twice.
+2. In Coolify, on this application, **Environment Variables**, add
+   `CONTACT_ENCRYPTION_KEYS` = `k2026:<the first one>` and
+   `LOOKUP_HMAC_KEY` = `<the second one>`. Tick nothing else (they're
+   runtime variables, not build ones).
+3. **Before deploying, copy both lines into your password manager** (see
+   the backup plan below).
+4. Redeploy. The log should have no `CONTACT_ENCRYPTION_KEYS` warning.
+   On the first deploy with this code, it also says the contact details
+   are now encrypted and that older snapshots aren't.
+
+Unset, the service makes **throwaway keys** for that run and prints them,
+the way it does `ADMIN_PASSWORD`. That's fine in development and on a
+brand-new install, where it warns loudly (`!!!`) in production. But
+details saved under throwaway keys can't be read after a restart, so
+**in production the service refuses to start without keys once there's
+anyone in the database**, saying why. Setting only one of the two, or a
+malformed one, always stops it.
+
+### Rotating a key
+
+1. Make a new key and put it **first**, keeping the old one after it:
+   `CONTACT_ENCRYPTION_KEYS=k2027:<new>,k2026:<old>`. Redeploy.
+2. At startup the service re-encrypts everything under an older key with
+   the new one, in one transaction, and logs `re-encrypted N contact
+   detail(s) under the current key, "k2027"`. (It does this at every
+   startup where anything isn't under the first key, so there's nothing
+   to run by hand.)
+3. **Keep the old key in the list as long as you keep any backup made
+   before the rotation**: the snapshots (14 days) and Coolify's backups
+   are still under it, and restoring one needs it. Once they've all aged
+   out, take it out and redeploy. If you take it out too soon, a
+   production start that finds anything under it is refused (see below).
+
+**Changing `LOOKUP_HMAC_KEY`** needs no steps: set the new one and
+redeploy. The service notices (a check value in `meta`), decrypts every
+email, phone and Instagram and works their hashes out again under the
+new key, and logs how many.
+
+### The key backup plan
+
+**Losing `CONTACT_ENCRYPTION_KEYS` loses every contact detail.** Nobody,
+including the admin, can get them back from the database: that's the
+point. So:
+
+- Keep both variables in your password manager, the moment they're made,
+  under something like "Canopy account service keys", and again whenever
+  one is rotated (with the old one, until it's retired).
+- Not on the Coolify server only: a lost server is when you'll need them.
+  Not in the repo. Not in the same place as the backups (a backup and its
+  key together are no better than plain text).
+- Restoring a backup on a new server means setting the same keys there
+  (or the list that includes the one the backup was made under).
+
+### If the keys are lost
+
+Startup in production refuses a database with values under a key it
+doesn't have: `N contact detail(s) in the database are encrypted under a
+key that isn't in CONTACT_ENCRYPTION_KEYS`. If the old key is somewhere,
+put it back after the current one. If it's truly gone, set
+`CONTACT_KEYS_LOST=1` (with new keys) and redeploy: the service starts,
+and every value it can't decrypt reads as empty. Nothing is deleted, so
+if the key turns up later, putting it back makes them readable again (and
+the next start re-encrypts them under the current key). Remove
+`CONTACT_KEYS_LOST` once the old values have been dealt with.
+
+Exactly what survives, with this design:
+
+**Only `CONTACT_ENCRYPTION_KEYS` lost** (`LOOKUP_HMAC_KEY` kept):
+
+- **Kept:** every account, name, photo, passkey and session, the admin,
+  the sites and their keys, every site's own records. **Sign-in by
+  passkey works** as before (a passkey names the account, not an email).
+- **Sign-in by email code still works**: the typed address is hashed and
+  finds the account by `email_hash`, the code goes to that address, and
+  proving it **puts the email back**, encrypted under the new key. So
+  each person's email comes back the first time they sign in by code.
+  Until then their profile and the admin show it as empty, and
+  confirming an unverified email from the profile asks them to sign in
+  by code instead.
+- **The lookup still finds people** by the phone number or Instagram
+  they had, because the hashes are intact, even though their profile
+  shows those as empty. Typing them in again (or clearing them) replaces
+  the hash as usual.
+- **Lost for good:** every phone number, Instagram, Venmo and Cash App,
+  as text. People have to type them in again.
+
+**Only `LOOKUP_HMAC_KEY` lost:** nothing is lost. Set a new one; the
+service rebuilds every hash from the decrypted values at startup.
+
+**Both lost:** as the first case, except the hashes are rebuilt under the
+new key from values that can't be decrypted, so they're cleared. Then
+emails can't be recovered by code: a person who signs in by code with
+their address gets a **new, empty account** for it (their old one is
+still reachable by passkey, with an empty email; the admin can set it).
+The lookup finds no one until people type their numbers in again. This is
+why both keys go in the password manager together.
+
+**Snapshots and backups from before the upgrade** that introduced this
+(schema version 9) still hold everything in plain text. They age out of
+`backups/sqlite` in 14 days; delete them sooner once the first new
+snapshot exists, and expire Coolify's older backups the same way. The
+service says so in its log the first time it starts on version 9.
+
 ## Running locally
 
 ```bash
@@ -1116,6 +1304,11 @@ the console instead of emailed:
 ```
 [canopy-account] code for ana@example.com: 123456
 ```
+
+With no `CONTACT_ENCRYPTION_KEYS` and `LOOKUP_HMAC_KEY`, throwaway keys
+are made and printed at each start (see "Contact details at rest"); copy
+them into your environment to keep a local database readable across
+restarts.
 
 Locally the cookie has no `Domain` and isn't `Secure`, and
 `http://localhost` passes the Origin and `?return=` checks. None of that
@@ -1157,6 +1350,12 @@ build rather than the deploy. It runs as `NODE_ENV=production`, port
    - `ANDROID_APK_KEY_HASHES`: empty until there's an Android app. Then
      its signing certificate's SHA-256 (see "Apps" and
      `docs/native-api.md`).
+   - `CONTACT_ENCRYPTION_KEYS` and `LOOKUP_HMAC_KEY`: required. Make each
+     with `openssl rand -base64 32`, set `CONTACT_ENCRYPTION_KEYS` to
+     `k2026:<one>` and `LOOKUP_HMAC_KEY` to `<the other>`, and **put both
+     in your password manager before deploying**. See "Contact details at
+     rest" for why, rotation, and what losing them costs.
+   - `CONTACT_KEYS_LOST`: leave unset. See "If the keys are lost".
    - Leave `PORT` and `DATA_DIR` alone. The Dockerfile sets them.
 6. Deploy.
 7. **Make the admin.** Open `https://account.canopysf.com`. A new install
@@ -1183,10 +1382,12 @@ empty, the path isn't `/app/data`, or it was added without a redeploy
 since). With 0 people the server also logs a line saying that. On a
 brand-new install, 0 is right.
 
-Two more lines worth seeing once: no warning about `SMTP_HOST` (in
-production that warning means sign-up and email recovery will fail), and
-no "ADMIN_PASSWORD not set" (that means a random one was made up for
-this run).
+Three more lines worth seeing once: no warning about `SMTP_HOST` (in
+production that warning means sign-up and email recovery will fail), no
+"ADMIN_PASSWORD not set" (that means a random one was made up for this
+run), and no "CONTACT_ENCRYPTION_KEYS and LOOKUP_HMAC_KEY are not set"
+(that means contact details saved in this run are lost at the next
+restart; with anyone in the database it doesn't start at all).
 
 ## Email: iCloud SMTP
 
@@ -1267,6 +1468,11 @@ until the admin switches it on. Version 7 added what each session is
 session already here is a browser's, signed in when it started. Version 8
 added which contact details each site is told (`apps.contact_fields`):
 every site already here keeps all five, and a new one starts with none.
+Version 9 encrypted the contact details (see "Contact details at rest"):
+every row is sealed in the upgrade's one transaction, the plain-text
+indexes go, keyed-hash columns and their indexes come in, and the file
+is rebuilt with `VACUUM` so none of the plain text is left in it. It
+needs the keys set before it runs.
 
 **Backups.** Two layers, the same as tickets:
 
@@ -1287,10 +1493,14 @@ every site already here keeps all five, and a new one starts with none.
 SQLite replays the newer write log on top of the older snapshot). Start
 the service and check the people count in the log. Photos and images
 aren't in the snapshot: they come from the volume, or from Coolify's
-archive of it.
+archive of it. The contact details in a snapshot are encrypted under
+whatever key was current when it was taken, so `CONTACT_ENCRYPTION_KEYS`
+has to include that key (see "Rotating a key").
 
 The snapshots hold everything the database does, but no secrets that
 work: session tokens, setup link codes, site keys and emailed codes are
-all hashes, and passkeys are public keys. A restored snapshot signs
+all hashes, and passkeys are public keys. And no contact details anyone
+can read without the keys: they're encrypted (see "Contact details at
+rest"). A restored snapshot signs
 people in as they were then. Anyone who signed in since needs to sign in
 again, and a site key made since won't work.
