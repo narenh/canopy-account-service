@@ -858,7 +858,9 @@ X-Canopy-Visitor-Ip: 203.0.113.7
 }
 ```
 
-or `{"person": null}` when nobody is found. Refusals: `403
+or `{"person": null}` when nobody is found: nobody with exactly that,
+someone who turned it off, more than one account with it, or one account
+whose email isn't proven. Refusals: `403
 lookup_not_allowed` (the site isn't switched on), `401 signed_out` (no
 signed-in visitor), `403 email_unverified` (the visitor hasn't proven
 their email), `400 one_of` (not exactly one of `phone` and `instagram`),
@@ -976,17 +978,43 @@ How the lookup works (`GET /api/people/lookup`, above):
   answer could be the wrong person, and inviting the wrong person is worse
   than not finding the right one. The cost: someone can hide another
   person from the lookup by claiming their handle. A miss says nothing
-  about why.
+  about why. Every account's claim counts here, unverified ones included
+  (see the next point for why).
 - **Only for verified askers, on switched-on sites.** The site has to be
   marked **Can find people by phone number or Instagram** in the Sites
   tab (off by default), and the asker has to be signed in there with a
   proven email. The limits are per asker, so an asker has to be someone,
   and an unverified account is too cheap to make for that to mean much.
-- **Unverified accounts can be found.** A phone number or handle is typed
-  in by its owner and proven by nothing, for every account alike. A proven
-  email says nothing about the phone, so it would be a false distinction.
-  Being found only lets a host invite them, and unverified accounts can
-  be invited on events.
+- **Only verified accounts are found.** This reverses an earlier
+  decision, which said unverified accounts can be found, because a phone
+  number or handle is proven by nothing for every account alike, so
+  telling them apart would be a false distinction. A security review
+  showed what that let through: anyone can make a quick sign-up in a
+  minute, with no inbox at all, type in a friend's name and their number
+  or Instagram, and be the one match, so a host who looks the friend up
+  invites the impostor (and sees the impostor's photo next to the
+  friend's name). Now an account whose email isn't proven is never the
+  answer; it becomes findable the moment its owner confirms their email.
+
+  **Its claim still counts against others.** If a verified account and
+  an unverified one have typed in the same number, the answer is `null`,
+  not the verified one. That keeps "inviting the wrong person is worse
+  than not finding the right one": the verified account isn't more likely
+  to own the phone (a proven email says nothing about it), and the
+  unverified one may well be the real owner, a quick sign-up who never
+  confirmed, with an impostor on a throwaway verified email. The cost is
+  that an unverified squatter can now hide someone from the lookup,
+  which only a verified one could before. Hiding someone is the lesser
+  harm.
+
+  **This raises the cost, it doesn't close the hole.** An impostor now
+  needs an email inbox they can read, which is a free webmail account
+  away. What would actually close it is proving the number itself: a
+  code by SMS to the phone (and, for Instagram, something like a code
+  sent by DM). Until there is that, a lookup's answer means "the one
+  account with a proven email that typed in this number", not "the
+  owner of this number", and sites should show it that way (the name and
+  photo, for the host to recognise).
 - **Nobody who turned it off.** The profile's "Let people who know your
   phone number or Instagram find you" is **on** by default. It's on
   because the lookup gives away nothing but the name and photo that
@@ -994,7 +1022,9 @@ How the lookup works (`GET /api/people/lookup`, above):
   has the number. Most people expect a friend with their number to be
   able to invite them, and off by default would make the feature
   useless for the people who never open their profile. Anyone who'd
-  rather not turns it off. To flip the default, change
+  rather not turns it off. A takeover (see "Proving the email") puts it
+  back to the default along with clearing the phone and Instagram. To
+  flip the default, change
   `FINDABLE_BY_DEFAULT` in `lib/db.js`; it applies to accounts made from
   then on (version 6 gave everyone already here the same default).
 

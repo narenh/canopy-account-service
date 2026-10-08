@@ -1578,8 +1578,10 @@ app.get('/api/people', requireSite, (req, res) => {
 //     signed in there (X-Canopy-Session, as for /api/session) whose email
 //     is proven: limits are per asker, so an asker has to be someone, and
 //     an unverified account is too cheap to make.
-//   - Nobody who turned "Let people ... find you" off, and nobody when two
-//     accounts claim the same one (lib/db.js).
+//   - Nobody who turned "Let people ... find you" off, nobody when two
+//     accounts claim the same one, and never an account whose email isn't
+//     proven, though its claim still counts as one of the two (lib/db.js,
+//     and "Finding people" in the README for why).
 //   - A miss is { person: null } and says nothing about why.
 //
 // Phone numbers can be listed by brute force (an area code is ten million

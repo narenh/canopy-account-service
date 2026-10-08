@@ -79,11 +79,36 @@ test('finding someone by phone or Instagram', async (t) => {
     assert.equal((await lookup(events, bob, 'phone=4155551234&phone=4155551234')).data.reason, 'one_of');
   });
 
-  await t.test('unverified accounts can be found', async () => {
+  await t.test('unverified accounts are never found, until their email is proven', async () => {
     const q = browser(server);
     const made = await q.quickSignUp('quincy@example.com', 'Quincy', 'Quick');
-    await q.patch('/api/profile', { firstName: 'Quincy', lastName: 'Quick', instagram: 'quincy.q' });
+    await q.patch('/api/profile', { firstName: 'Quincy', lastName: 'Quick', instagram: 'quincy.q', phone: '415 555 9876' });
+    assert.deepEqual((await lookup(events, bob, 'instagram=quincy.q')).data, { person: null });
+    assert.deepEqual((await lookup(events, bob, 'phone=4155559876')).data, { person: null });
+    // Proving the email (here, from the profile) makes them findable.
+    await q.post('/api/profile/verify/start');
+    assert.equal((await q.post('/api/profile/verify/check', { code: server.lastCode('quincy@example.com') })).status, 200);
     assert.equal((await lookup(events, bob, 'instagram=quincy.q')).data.person.id, made.data.person.id);
+  });
+
+  // The reviewer's case: someone makes a quick account (nothing proven)
+  // with a friend's name and their phone or Instagram, so that a host
+  // looking the friend up finds the impostor and invites them.
+  await t.test("an impostor's quick account is never the one found", async () => {
+    const zed = browser(server);
+    await zed.signUp('zed@example.com', 'Zed', 'Zane');
+    // Zed hasn't put his phone in yet: the impostor's would be the only
+    // claim, and is still not found.
+    const imp = browser(server);
+    await imp.quickSignUp('zed.zane@nowhere.invalid', 'Zed', 'Zane');
+    await imp.patch('/api/profile', { firstName: 'Zed', lastName: 'Zane', phone: '415 555 4444', instagram: 'zed.zane' });
+    assert.deepEqual((await lookup(events, bob, 'phone=4155554444')).data, { person: null });
+    assert.deepEqual((await lookup(events, bob, 'instagram=zed.zane')).data, { person: null });
+    // Once Zed has them too, the claim is contested and nobody is found:
+    // the impostor can hide him, but never stand in for him.
+    await zed.patch('/api/profile', { firstName: 'Zed', lastName: 'Zane', phone: '415 555 4444', instagram: 'zed.zane' });
+    assert.deepEqual((await lookup(events, bob, 'phone=4155554444')).data, { person: null });
+    assert.deepEqual((await lookup(events, bob, 'instagram=zed.zane')).data, { person: null });
   });
 
   await t.test('nobody who turned it off', async () => {
