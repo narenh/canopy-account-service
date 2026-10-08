@@ -107,6 +107,11 @@ feeds stay in tickets, keyed by the person ids from here.
   backdrop as files in `DATA_DIR`.
 - `client/canopy-account.js` is the file Canopy sites copy in (see "For
   Canopy sites").
+- `openapi.yaml` is the apps' contract (OpenAPI 3.1, served at
+  `/api/native/v1/openapi.yaml`), and `docs/native-api.md` the guide for
+  the people writing the apps. `docs/well-known/` has the two files
+  `canopysf.com` serves so the apps may use its passkeys (see "The
+  association files").
 - `views/` and `public/` are the pages: `welcome.html` (sign in / sign
   up), `profile.html`, `setup.html` (a setup link), `admin.html`, and
   the shared `account.js`, `account.css`, `copy.js` (every sentence the
@@ -121,7 +126,10 @@ feeds stay in tickets, keyed by the person ids from here.
   process on a scratch `DATA_DIR`. `test/softAuthenticator.js` is a
   software passkey, so the real `@simplewebauthn/server` checks run end
   to end with no browser, and it signs as a page or as the iOS or
-  Android app. `npm test` runs them all.
+  Android app. `test/docs.test.js` fails if a route under
+  `/api/native/v1` is missing from `openapi.yaml` or the other way
+  around (its one dev dependency, `yaml`, reads the spec). `npm test`
+  runs them all.
 
 `GET /healthz` answers `{"ok":true}`, and `GET /favicon.ico` answers an
 empty 204, so pages don't log a 404 for the icon they don't have.

@@ -1,0 +1,962 @@
+openapi: 3.1.0
+info:
+  title: Canopy accounts, for the apps
+  version: 1.0.0
+  summary: Sign-in, sign-up and the profile for Canopy's iOS and Android apps.
+  description: |
+    Everything a person does on the Canopy account pages, for the native
+    apps. `docs/native-api.md` in the account service's repo is the guide:
+    each flow step by step, what to keep in the Keychain or Keystore, and
+    what the errors mean. This file is the contract.
+
+    **Two kinds of bearer token.** Every request after `auth/begin` sends
+    `Authorization: Bearer <value>`:
+
+    - during a sign-in, the `ceremony` value `auth/begin` answered (the
+      `auth/*` steps take only this);
+    - once signed in, the `token` the last step answered (everything else
+      takes only this). It's also the token to send to Canopy sites.
+
+    The apps never send or get cookies, and never send `Origin`.
+
+    **Errors** are JSON: `{"error": "<a sentence>", "reason": "<code>"}`.
+    Match on `reason`; the sentence is for logs. Any request may also get
+    `429 rate_limited` where something is counted (see each step), and a
+    malformed JSON body gets `400 bad_json`.
+
+    **Times** are milliseconds since 1970 (UTC), as numbers.
+servers:
+  - url: https://account.canopysf.com/api/native/v1
+security:
+  - token: []
+tags:
+  - name: Signing in
+  - name: Profile
+  - name: Passkeys
+  - name: Email
+  - name: Sessions
+paths:
+  /auth/begin:
+    post:
+      tags: [Signing in]
+      summary: Start a sign-in or sign-up
+      description: |
+        Makes a fresh sign-in, not yet anyone's, and answers its `ceremony`
+        value. Send that as the bearer token at every `auth/*` step after.
+        It runs out a day after its last use. The body has to be JSON.
+      security: []
+      operationId: begin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform]
+              properties:
+                platform:
+                  type: string
+                  enum: [ios, android]
+                app:
+                  type: string
+                  maxLength: 40
+                  description: The app's name, for the person's list of where they're signed in.
+                  examples: [Canopy Events]
+                device:
+                  type: string
+                  maxLength: 40
+                  description: The device's model (not the name its owner gave it).
+                  examples: [iPhone]
+      responses:
+        '201':
+          description: A ceremony.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ceremony]
+                properties:
+                  ceremony: { $ref: '#/components/schemas/Token' }
+        '400': { $ref: '#/components/responses/BadPlatform' }
+        '403': { $ref: '#/components/responses/BadOrigin' }
+
+  /auth/passkey/options:
+    post:
+      tags: [Signing in]
+      summary: Sign in with a passkey, step 1
+      description: No email. The phone offers whichever Canopy passkey it has.
+      security: [{ ceremony: [] }]
+      operationId: passkeyOptions
+      requestBody: { $ref: '#/components/requestBodies/Empty' }
+      responses:
+        '200': { $ref: '#/components/responses/RequestOptions' }
+        '400': { $ref: '#/components/responses/Expired' }
+        '403': { $ref: '#/components/responses/SetupRequired' }
+        '409': { $ref: '#/components/responses/SignedIn' }
+
+  /auth/passkey/verify:
+    post:
+      tags: [Signing in]
+      summary: Sign in with a passkey, step 2
+      security: [{ ceremony: [] }]
+      operationId: passkeyVerify
+      requestBody: { $ref: '#/components/requestBodies/Assertion' }
+      responses:
+        '200': { $ref: '#/components/responses/SignedInNow' }
+        '400':
+          description: |
+            `expired` (start again from `auth/begin`), `unknown_passkey` (it was
+            removed or reset, or its account was deleted: sign in by email),
+            or `not_verified`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/SetupRequired' }
+        '409': { $ref: '#/components/responses/SignedIn' }
+
+  /auth/email/start:
+    post:
+      tags: [Signing in]
+      summary: Email a 6-digit code
+      description: |
+        Every email gets a code, account or not; whether it has one is only
+        said once the code is typed. Calling it again sends a new code and
+        the old one stops working. Counted: 5 per email and 20 per address
+        an hour, 100 an hour across everyone (shared with the web).
+      security: [{ ceremony: [] }]
+      operationId: emailStart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: The code is on its way.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [verified, email]
+                properties:
+                  verified: { type: boolean, const: false }
+                  email: { type: string, description: The address as cleaned (lowercase). }
+        '400': { $ref: '#/components/responses/BadEmailOrExpired' }
+        '403': { $ref: '#/components/responses/SetupRequired' }
+        '409': { $ref: '#/components/responses/SignedIn' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502': { $ref: '#/components/responses/MailFailed' }
+
+  /auth/email/verify:
+    post:
+      tags: [Signing in]
+      summary: Type the code back
+      description: |
+        The right code proves the email on this ceremony for 15 minutes.
+        A code is good for 10 minutes and 5 wrong tries. Wrong codes are
+        counted: 10 per email and 40 per address per 15 minutes, 300 an hour
+        across everyone (shared with the web).
+      security: [{ ceremony: [] }]
+      operationId: emailVerify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: '^[0-9 ]+$', examples: ['123456'] }
+      responses:
+        '200':
+          description: |
+            Proven. `state` says what comes next: `new` goes to
+            `auth/register/new`, `existing` to `auth/register/existing`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailState' }
+        '400': { $ref: '#/components/responses/Expired' }
+        '403': { $ref: '#/components/responses/WrongCode' }
+        '409': { $ref: '#/components/responses/SignedIn' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/register/new:
+    post:
+      tags: [Signing in]
+      summary: A new account, step 1 (after a proven email)
+      description: |
+        The account is only made once its passkey is
+        (`auth/register/verify`). Upload the photo after, with `me/photo`.
+      security: [{ ceremony: [] }]
+      operationId: registerNew
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [firstName, lastName]
+              properties:
+                firstName: { type: string, maxLength: 60 }
+                lastName: { type: string, maxLength: 60 }
+                venmoHandle: { type: string, maxLength: 31 }
+      responses:
+        '200': { $ref: '#/components/responses/CreationOptions' }
+        '400':
+          description: '`verify_first` (no proven email, or it ran out), `names_required`, `bad_venmo`, `expired`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/SetupRequired' }
+        '409':
+          description: '`conflict` (the email has an account now), or `signed_in`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/register/existing:
+    post:
+      tags: [Signing in]
+      summary: A new passkey for the proven email's account, step 1
+      description: |
+        A new phone or a lost one. If the account's email wasn't verified,
+        finishing this takes it over: every other passkey it had is removed
+        and every other browser and app is signed out. `auth/email/verify`
+        says so ahead of time (`unverified: true`), so the app can warn.
+      security: [{ ceremony: [] }]
+      operationId: registerExisting
+      requestBody: { $ref: '#/components/requestBodies/Empty' }
+      responses:
+        '200': { $ref: '#/components/responses/CreationOptions' }
+        '400':
+          description: '`verify_first` or `expired`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/SetupRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/SignedIn' }
+
+  /auth/quick/start:
+    post:
+      tags: [Signing in]
+      summary: The quick sign-up, step 1
+      description: |
+        Name, email and a passkey: no code, no photo. The account is
+        unverified until a code proves the email. An email that already has
+        an account is told so (`409 email_has_account`). Counted, found or
+        not: 10 per ceremony per 15 minutes, 20 per address and 200 across
+        everyone an hour; accounts made, 10 per address and 50 across
+        everyone an hour (shared with the web).
+      security: [{ ceremony: [] }]
+      operationId: quickStart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [firstName, lastName, email]
+              properties:
+                firstName: { type: string, maxLength: 60 }
+                lastName: { type: string, maxLength: 60 }
+                email: { type: string, format: email }
+      responses:
+        '200': { $ref: '#/components/responses/CreationOptions' }
+        '400':
+          description: '`names_required`, `bad_email` or `expired`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/SetupRequired' }
+        '409':
+          description: '`email_has_account` (with `email`: offer passkey sign-in, or a code), or `signed_in`.'
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Error' }
+                  - type: object
+                    properties:
+                      email: { type: string }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/register/verify:
+    post:
+      tags: [Signing in]
+      summary: The passkey that finishes a sign-up or a new phone
+      description: |
+        Step 2 of `auth/register/new`, `auth/register/existing` and
+        `auth/quick/start`. Signs in: the answer's `token` is the app's from
+        now on, and the ceremony value is worthless.
+      security: [{ ceremony: [] }]
+      operationId: registerVerify
+      requestBody: { $ref: '#/components/requestBodies/Attestation' }
+      responses:
+        '201': { $ref: '#/components/responses/SignedInNow' }
+        '400':
+          description: '`expired` (start again) or `not_verified`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/SetupRequired' }
+        '409':
+          description: '`passkey_exists`, `conflict`, `email_has_account` or `signed_in`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /signout:
+    post:
+      tags: [Sessions]
+      summary: Sign out this app
+      description: |
+        Ends this token's session, on every Canopy site at once (a site may
+        go on showing someone for the minute it caches the answer). Always
+        `200`, signed in or not. Forget the token afterwards.
+      security: [{ token: [] }, { ceremony: [] }]
+      operationId: signOut
+      requestBody: { $ref: '#/components/requestBodies/Empty' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /signout/everywhere:
+    post:
+      tags: [Sessions]
+      summary: Sign out of every browser and app, this one included
+      operationId: signOutEverywhere
+      requestBody: { $ref: '#/components/requestBodies/Empty' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me:
+    get:
+      tags: [Profile]
+      summary: Who's signed in
+      operationId: getMe
+      responses:
+        '200': { $ref: '#/components/responses/Me' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+    patch:
+      tags: [Profile]
+      summary: Change the profile
+      description: |
+        Names are required every time. Every other field is only changed
+        when it's sent, and an empty string clears it. The email isn't
+        changed here (see `me/email/start`).
+      operationId: patchMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [firstName, lastName]
+              properties:
+                firstName: { type: string, maxLength: 60 }
+                lastName: { type: string, maxLength: 60 }
+                phone:
+                  type: string
+                  description: US and Canadian numbers without +1; others with + and the country code.
+                instagram: { type: string, description: 'An @ or a pasted instagram.com link is trimmed.' }
+                venmoHandle: { type: string }
+                cashapp: { type: string, description: 'A $ is trimmed.' }
+                findable:
+                  type: boolean
+                  description: Let people who know their phone number or Instagram find them.
+      responses:
+        '200': { $ref: '#/components/responses/Me' }
+        '400':
+          description: '`names_required`, `bad_phone`, `bad_instagram`, `bad_venmo` or `bad_cashapp`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/photo:
+    post:
+      tags: [Profile]
+      summary: Upload a new photo
+      description: |
+        A square JPEG, cropped and shrunk on the phone (512 by 512 is what
+        the web sends), at most 3 MB. Its metadata, orientation included,
+        is taken out before it's saved, so send it upright.
+      operationId: uploadPhoto
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo]
+              properties:
+                photo:
+                  type: string
+                  contentMediaType: image/jpeg
+            encoding:
+              photo:
+                contentType: image/jpeg
+      responses:
+        '200': { $ref: '#/components/responses/Me' }
+        '400':
+          description: '`no_photo` (no part named photo, or not an image type), `bad_photo` (not a readable JPEG), `too_large`, `bad_upload`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/passkeys:
+    get:
+      tags: [Passkeys]
+      summary: Their passkeys
+      operationId: listPasskeys
+      responses:
+        '200':
+          description: Oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [passkeys]
+                properties:
+                  passkeys:
+                    type: array
+                    items: { $ref: '#/components/schemas/Passkey' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/passkeys/options:
+    post:
+      tags: [Passkeys]
+      summary: Add a passkey, step 1
+      operationId: addPasskeyOptions
+      requestBody: { $ref: '#/components/requestBodies/Empty' }
+      responses:
+        '200': { $ref: '#/components/responses/CreationOptions' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/passkeys/verify:
+    post:
+      tags: [Passkeys]
+      summary: Add a passkey, step 2
+      operationId: addPasskeyVerify
+      requestBody: { $ref: '#/components/requestBodies/Attestation' }
+      responses:
+        '201': { $ref: '#/components/responses/Ok' }
+        '400':
+          description: '`expired` (start again) or `not_verified`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '409':
+          description: '`passkey_exists`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/passkeys/{id}:
+    delete:
+      tags: [Passkeys]
+      summary: Remove one of their passkeys
+      description: Never the last one.
+      operationId: removePasskey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The passkey's id from the list (base64url; URL-encode it).
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`last_passkey`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/reauth/options:
+    post:
+      tags: [Email]
+      summary: Confirm it's them with a passkey, step 1
+      description: Before changing the email. Only their own passkeys, with user verification required.
+      operationId: reauthOptions
+      requestBody: { $ref: '#/components/requestBodies/Empty' }
+      responses:
+        '200': { $ref: '#/components/responses/RequestOptions' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/reauth/verify:
+    post:
+      tags: [Email]
+      summary: Confirm it's them with a passkey, step 2
+      description: Good for 15 minutes and one email change.
+      operationId: reauthVerify
+      requestBody: { $ref: '#/components/requestBodies/Assertion' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '400':
+          description: '`expired` or `not_verified` (including someone else''s passkey).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/email/start:
+    post:
+      tags: [Email]
+      summary: Change the email, step 1 (a code to the new address)
+      description: Counted with the other codes.
+      operationId: emailChangeStart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: The code is on its way.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, email]
+                properties:
+                  ok: { type: boolean, const: true }
+                  email: { type: string }
+        '400':
+          description: '`bad_email` or `same_email`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '403':
+          description: '`reauth_required`: confirm with a passkey first (`me/reauth/*`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`email_unavailable`: it can''t be used (said the same way whatever the reason).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502': { $ref: '#/components/responses/MailFailed' }
+
+  /me/email/verify:
+    post:
+      tags: [Email]
+      summary: Change the email, step 2 (the code)
+      description: The old address is sent a notice. The account is verified afterwards.
+      operationId: emailChangeVerify
+      requestBody: { $ref: '#/components/requestBodies/Code' }
+      responses:
+        '200': { $ref: '#/components/responses/Me' }
+        '400': { $ref: '#/components/responses/Expired' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '403':
+          description: '`wrong_code` or `reauth_required`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`email_unavailable`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /me/verify/start:
+    post:
+      tags: [Email]
+      summary: Confirm the email, step 1 (the unverified banner's button)
+      description: "A code to their own address. `verified: true` means there's nothing to confirm."
+      operationId: verifyStart
+      requestBody: { $ref: '#/components/requestBodies/Empty' }
+      responses:
+        '200':
+          description: A code is on its way, or the email is already confirmed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, verified, email]
+                properties:
+                  ok: { type: boolean, const: true }
+                  verified: { type: boolean }
+                  email: { type: string }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502': { $ref: '#/components/responses/MailFailed' }
+
+  /me/verify/check:
+    post:
+      tags: [Email]
+      summary: Confirm the email, step 2 (the code)
+      operationId: verifyCheck
+      requestBody: { $ref: '#/components/requestBodies/Code' }
+      responses:
+        '200': { $ref: '#/components/responses/Me' }
+        '400': { $ref: '#/components/responses/Expired' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '403': { $ref: '#/components/responses/WrongCode' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /me/sessions:
+    get:
+      tags: [Sessions]
+      summary: Where they're signed in
+      description: Every browser and app, most recently seen first.
+      operationId: listSessions
+      responses:
+        '200':
+          description: The list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/SignedOut' }
+
+  /me/sessions/{id}:
+    delete:
+      tags: [Sessions]
+      summary: Sign one of them out
+      description: '`current: true` means it was this app: forget the token.'
+      operationId: endSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{24}$' }
+      responses:
+        '200':
+          description: Signed out.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, current]
+                properties:
+                  ok: { type: boolean, const: true }
+                  current: { type: boolean }
+        '401': { $ref: '#/components/responses/SignedOut' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /openapi.yaml:
+    get:
+      summary: This file
+      security: []
+      operationId: openapi
+      responses:
+        '200':
+          description: OpenAPI 3.1, as YAML.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    token:
+      type: http
+      scheme: bearer
+      description: The `token` a sign-in answered. Kept in the Keychain or Keystore.
+    ceremony:
+      type: http
+      scheme: bearer
+      description: The `ceremony` value `auth/begin` answered, during a sign-in only.
+
+  schemas:
+    Token:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{43}$'
+      description: 32 random bytes, base64url. Opaque.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: 'A sentence, for logs.' }
+        reason: { type: string, description: 'What to match on.' }
+    Person:
+      type: object
+      description: The person signed in. Their own details only; never shown to anyone else.
+      required: [id, email, emailVerified, firstName, lastName, shortName, photoUrl, venmo, phone, instagram, cashapp, findable, isAdmin]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        emailVerified:
+          type: boolean
+          description: false for a quick sign-up (or an email the admin changed) until a code proves it. Show the banner.
+        firstName: { type: string }
+        lastName: { type: string }
+        shortName: { type: string, examples: [Ana L] }
+        photoUrl:
+          type: [string, 'null']
+          description: Load it with the bearer token. Its ?v= changes whenever the photo does.
+        venmo: { type: [string, 'null'] }
+        phone: { type: [string, 'null'], description: E.164. }
+        instagram: { type: [string, 'null'] }
+        cashapp: { type: [string, 'null'] }
+        findable: { type: boolean }
+        isAdmin: { type: boolean, description: The admin uses the web for that. }
+    EmailState:
+      type: object
+      required: [verified, state, email]
+      properties:
+        verified: { type: boolean, const: true }
+        state: { type: string, enum: [new, existing] }
+        email: { type: string }
+        firstName: { type: string, description: existing only. }
+        hasPasskey: { type: boolean, description: existing only. }
+        unverified:
+          type: boolean
+          description: existing only. true means finishing takes the account over (see auth/register/existing).
+    Passkey:
+      type: object
+      required: [id, createdAt, lastUsedAt, synced, transports]
+      properties:
+        id: { type: string }
+        createdAt: { type: integer }
+        lastUsedAt: { type: [integer, 'null'] }
+        synced: { type: boolean, description: In iCloud Keychain or Google Password Manager, or on one device only. }
+        transports: { type: array, items: { type: string } }
+    Session:
+      type: object
+      required: [id, kind, name, signedInAt, lastSeenAt, current]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [web, ios, android] }
+        name:
+          type: [string, 'null']
+          description: '"Safari on iPhone", "Canopy Events on iPhone"; null when it never said.'
+        signedInAt: { type: integer }
+        lastSeenAt: { type: integer }
+        current: { type: boolean, description: This app. }
+    CreationOptions:
+      type: object
+      description: |
+        WebAuthn PublicKeyCredentialCreationOptionsJSON (binary fields
+        base64url). Android: pass it as is to CreatePublicKeyCredentialRequest.
+        iOS: challenge and user.id, base64url-decoded, with rp.id as the
+        relying party.
+      required: [challenge, rp, user, pubKeyCredParams]
+      properties:
+        challenge: { type: string }
+        rp:
+          type: object
+          properties:
+            id: { type: string, examples: [canopysf.com] }
+            name: { type: string }
+        user:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            displayName: { type: string }
+        pubKeyCredParams: { type: array, items: { type: object } }
+        excludeCredentials: { type: array, items: { type: object } }
+        authenticatorSelection: { type: object }
+        attestation: { type: string }
+        timeout: { type: integer }
+      additionalProperties: true
+    RequestOptions:
+      type: object
+      description: |
+        WebAuthn PublicKeyCredentialRequestOptionsJSON. Android: pass it as
+        is to GetPublicKeyCredentialOption. iOS: the challenge,
+        base64url-decoded, and allowCredentials when there are any.
+      required: [challenge, rpId]
+      properties:
+        challenge: { type: string }
+        rpId: { type: string }
+        allowCredentials: { type: array, items: { type: object } }
+        userVerification: { type: string }
+        timeout: { type: integer }
+      additionalProperties: true
+    RegistrationResponse:
+      type: object
+      description: WebAuthn RegistrationResponseJSON. Every binary field base64url, unpadded.
+      required: [id, rawId, type, response]
+      properties:
+        id: { type: string }
+        rawId: { type: string }
+        type: { type: string, const: public-key }
+        response:
+          type: object
+          required: [clientDataJSON, attestationObject]
+          properties:
+            clientDataJSON: { type: string }
+            attestationObject: { type: string }
+            transports: { type: array, items: { type: string } }
+        clientExtensionResults: { type: object }
+        authenticatorAttachment: { type: string }
+    AuthenticationResponse:
+      type: object
+      description: WebAuthn AuthenticationResponseJSON. Every binary field base64url, unpadded.
+      required: [id, rawId, type, response]
+      properties:
+        id: { type: string }
+        rawId: { type: string }
+        type: { type: string, const: public-key }
+        response:
+          type: object
+          required: [clientDataJSON, authenticatorData, signature]
+          properties:
+            clientDataJSON: { type: string }
+            authenticatorData: { type: string }
+            signature: { type: string }
+            userHandle: { type: string }
+        clientExtensionResults: { type: object }
+        authenticatorAttachment: { type: string }
+
+  requestBodies:
+    Empty:
+      description: Nothing; send `{}`.
+      content:
+        application/json:
+          schema: { type: object }
+    Code:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code]
+            properties:
+              code: { type: string, examples: ['123456'] }
+    Attestation:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [response]
+            properties:
+              response: { $ref: '#/components/schemas/RegistrationResponse' }
+    Assertion:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [response]
+            properties:
+              response: { $ref: '#/components/schemas/AuthenticationResponse' }
+
+  responses:
+    Ok:
+      description: Done.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok]
+            properties:
+              ok: { type: boolean, const: true }
+    Me:
+      description: Who's signed in.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [person]
+            properties:
+              person: { $ref: '#/components/schemas/Person' }
+    SignedInNow:
+      description: Signed in. Keep `token` (Keychain / Keystore) and forget the ceremony.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [token, person]
+            properties:
+              token: { $ref: '#/components/schemas/Token' }
+              person: { $ref: '#/components/schemas/Person' }
+    CreationOptions:
+      description: Make a passkey with these, then send it to the next step within 5 minutes.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [options]
+            properties:
+              options: { $ref: '#/components/schemas/CreationOptions' }
+    RequestOptions:
+      description: Use a passkey with these, then send it to the next step within 5 minutes.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [options]
+            properties:
+              options: { $ref: '#/components/schemas/RequestOptions' }
+    BadPlatform:
+      description: '`bad_platform`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadOrigin:
+      description: '`bad_origin`: not JSON (or, on any other path, no bearer header).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Expired:
+      description: '`expired`: no ceremony (or it ran out), or the code ran out. Start that step again.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadEmailOrExpired:
+      description: '`bad_email`, or `expired` (no ceremony).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    WrongCode:
+      description: '`wrong_code`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    SetupRequired:
+      description: '`setup_required`: the service has no admin yet.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    SignedIn:
+      description: '`signed_in`: that bearer is a signed-in token, not a ceremony. Sign out first.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    SignedOut:
+      description: '`signed_out`: no token, or it''s been signed out, reset, deleted, or unused for a year. Forget it and sign in again.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: '`not_found`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: '`rate_limited`: wait a few minutes.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    MailFailed:
+      description: '`mail_failed`: the email couldn''t be sent.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

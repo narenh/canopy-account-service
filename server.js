@@ -419,7 +419,7 @@ const PASSKEY_CEREMONY_MS = 5 * 60 * 1000;
 
 function requirePasskeyRp(req, res) {
   const rpID = passkeyRpId(req.hostname);
-  if (!rpID) res.status(400).json({ error: 'passkeys are not available on this address' });
+  if (!rpID) res.status(400).json({ error: 'passkeys are not available on this address', reason: 'no_passkeys' });
   return rpID;
 }
 
@@ -577,7 +577,7 @@ const registerNew = handle(async (req, res) => {
   if (!email) return;
   const body = req.body || {};
   const names = cleanNames(body);
-  if (names.error) return res.status(400).json({ error: names.error });
+  if (names.error) return res.status(400).json({ error: names.error, reason: 'names_required' });
   if (store.getPersonByEmail(email)) return res.status(409).json({ error: 'that email already has an account', reason: 'conflict' });
   const venmo = cleanVenmo(body.venmoHandle);
   if (venmo === false) return res.status(400).json(BAD_VENMO);
@@ -598,7 +598,7 @@ const registerExisting = handle(async (req, res) => {
   const email = provenEmail(req, res);
   if (!email) return;
   const person = store.getPersonByEmail(email);
-  if (!person) return res.status(404).json({ error: 'not found' });
+  if (!person) return res.status(404).json({ error: 'not found', reason: 'not_found' });
   const options = await registrationOptions(rpID, {
     userId: person.id, email: person.email, displayName: `${person.firstName} ${person.lastName}`,
     existing: store.passkeysOf(person.id)
@@ -888,7 +888,7 @@ app.get('/api/profile/sessions', requireSignedIn, listSessions);
 // out.
 const endOneSession = (req, res) => {
   const ended = store.endSessionOf(req.person.id, req.params.id);
-  if (!ended) return res.status(404).json({ error: 'not found' });
+  if (!ended) return res.status(404).json({ error: 'not found', reason: 'not_found' });
   const current = ended.idHash === req.sess.idHash;
   if (current) signOut(req, res);
   res.json({ ok: true, current });
@@ -1090,7 +1090,7 @@ const photoUpload = multer({
 // admin's edit (`withEmail`): people change everything else themselves.
 function profileChanges(body, { withEmail = false } = {}) {
   const names = cleanNames(body);
-  if (names.error) return { error: { error: names.error } };
+  if (names.error) return { error: { error: names.error, reason: 'names_required' } };
   const changes = { names };
   const fields = [
     ['venmoHandle', 'venmo', cleanVenmo, BAD_VENMO],
@@ -1176,7 +1176,7 @@ const removePasskey = (req, res) => {
   if (result.reason === 'last_passkey') {
     return res.status(409).json({ error: "that's your only passkey -- add another first", reason: 'last_passkey' });
   }
-  res.status(404).json({ error: 'not found' });
+  res.status(404).json({ error: 'not found', reason: 'not_found' });
 };
 app.delete('/api/profile/passkeys/:id', requireSignedIn, removePasskey);
 
@@ -1305,6 +1305,14 @@ native.post('/me/verify/check', nativeSignedIn, verifyCheck);
 // Where they're signed in.
 native.get('/me/sessions', nativeSignedIn, listSessions);
 native.delete('/me/sessions/:id', nativeSignedIn, endOneSession);
+
+// The contract, for app developers and their tools. test/docs.test.js
+// keeps it and the routes above in step.
+const OPENAPI = fs.readFileSync(path.join(__dirname, 'openapi.yaml'), 'utf8');
+native.get('/openapi.yaml', (req, res) => {
+  res.set('Content-Type', 'application/yaml; charset=utf-8');
+  res.send(OPENAPI);
+});
 
 // ---------------- Admin ----------------
 
@@ -1689,9 +1697,9 @@ app.use(
 // Upload errors (bad type, too big) as JSON rather than Express's HTML.
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'image is too large' : err.message });
+    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'image is too large' : err.message, reason: err.code === 'LIMIT_FILE_SIZE' ? 'too_large' : 'bad_upload' });
   }
-  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'bad JSON' });
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'bad JSON', reason: 'bad_json' });
   next(err);
 });
 
