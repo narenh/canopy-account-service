@@ -62,8 +62,10 @@
 // as a former member, keeping whatever this site recorded for them.
 //
 // Other people -- people() and lookup() -- are only ever { id, firstName,
-// lastName, shortName, photoUrl }. Never show one person another's email,
-// phone, Instagram, Venmo or Cash App: this site never gets them anyway.
+// lastName, shortName, photoUrl }, plus, from people() on a site the
+// account admin has let see payment handles, venmo and cashapp (whichever
+// of the two the site is granted). Never show one person another's
+// email, phone or Instagram: this site never gets them anyway.
 
 const crypto = require('crypto');
 

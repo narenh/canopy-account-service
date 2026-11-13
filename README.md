@@ -941,7 +941,8 @@ replaces it (the old one stops working right away), and **Cut off**
 stops that site and no other. A site that's been cut off gets back in by
 being given a new key. Each site also has the switch **Allows quick
 (unverified) accounts**, off unless the admin turns it on (see "Quick
-sign-up"), and a box for each of the visitor's own contact details it may
+sign-up"), the switch **Can see everyone's Venmo and Cash App**, also off
+unless the admin turns it on (see `GET /api/people`), and a box for each of the visitor's own contact details it may
 be told (see "What a site is told about the visitor").
 
 ### `GET /api/session`: who's visiting
@@ -1073,7 +1074,16 @@ Authorization: Bearer cnp_8vD...
 ```
 
 Other people come without their email, phone, Instagram, Venmo or Cash
-App, and without whether their email is proven. **An id that's missing
+App, and without whether their email is proven. The one exception is a
+site the admin has switched on for **Can see everyone's Venmo and Cash
+App**: each person then also has `venmo` and `cashapp`, but only those of
+the two the site has a box ticked for (see "What a site is told about the
+visitor"), and `null` when they haven't filled one in. It's for a site
+where friends pay each other (tickets: the host asking someone for what
+they owe), so the handle is the one they use today, not the one the site
+saw the last time they visited. The switch never hands over a field the
+site couldn't already be told, and never email, phone or Instagram.
+**An id that's missing
 from the answer is a deleted account**: the site shows them as a former
 member and keeps whatever it recorded for them.
 
@@ -1985,7 +1995,10 @@ needs the keys set before it runs. Version 10 added the lookup log
 added the calendar feed: each site's `calendar_url`, `calendar_secret`
 (sealed) and `calendar_secret_at`, all empty (no site has a calendar until
 the admin says where it is), and `calendar_feeds`, empty (a link is made
-when someone first opens their Calendar section).
+when someone first opens their Calendar section). Version 12 added test
+people (`people.is_test`; everyone already here is real). Version 13
+added `apps.allows_payment_handles`: no site sees anyone else's Venmo or
+Cash App until the admin switches it on.
 
 **Backups.** Two layers, the same as tickets:
 

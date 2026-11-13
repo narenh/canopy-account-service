@@ -608,6 +608,7 @@ async function loadSites(){
     who.append(name, sub);
     who.appendChild(siteSwitch(a, 'allowsUnverified', 'admin.allowsUnverified'));
     who.appendChild(siteSwitch(a, 'allowsLookup', 'admin.allowsLookup'));
+    who.appendChild(siteSwitch(a, 'allowsPaymentHandles', 'admin.allowsPaymentHandles'));
     who.appendChild(siteFields(a));
     who.appendChild(siteCalendar(a));
     const actions = document.createElement('div');

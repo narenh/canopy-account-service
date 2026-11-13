@@ -27,6 +27,7 @@ test('a version 1 database is brought up to date', () => {
     old.exec('ALTER TABLE sessions DROP COLUMN reauth_at');
     old.exec('ALTER TABLE apps DROP COLUMN allows_unverified');
     old.exec('ALTER TABLE apps DROP COLUMN allows_lookup');
+    old.exec('ALTER TABLE apps DROP COLUMN allows_payment_handles');
     old.exec('ALTER TABLE people DROP COLUMN findable');
     ['client_kind', 'client_name', 'signed_in_at'].forEach((c) => old.exec(`ALTER TABLE sessions DROP COLUMN ${c}`));
     old.exec('ALTER TABLE apps DROP COLUMN contact_fields');
@@ -62,6 +63,8 @@ test('a version 1 database is brought up to date', () => {
     // Version 6: everyone gets the findable default; no site may look up.
     assert.equal(store.getPerson('p1').findable, FINDABLE_BY_DEFAULT);
     assert.equal(store.listApps()[0].allowsLookup, false);
+    // Version 13: no site sees anyone's payment handles.
+    assert.equal(store.listApps()[0].allowsPaymentHandles, false);
     assert.ok(store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'people_phone_hash'").get());
     store.setPersonPhone('p1', '+14155551234');
     assert.equal(store.findPerson({ phone: '+14155551234' }).id, 'p1');
@@ -118,7 +121,7 @@ test('a version 10 database (contact details sealed) opens at the current versio
     // aren't there yet: that has to work.
     const store = init({ file, snapshots: false, contactCrypto, production: true });
     assert.equal(store.db.pragma('user_version', { simple: true }), SCHEMA_VERSION);
-    assert.equal(SCHEMA_VERSION, 12);
+    assert.equal(SCHEMA_VERSION, 13);
     const site = store.setAppCalendarUrl('a1', 'http://events:3000');
     const feed = store.calendarFeed('p1');
     store.db.close();
@@ -160,7 +163,7 @@ test('a version 11 database gets test people at 12: nobody already there is one'
     old.close();
 
     const store = init({ file, snapshots: false, contactCrypto, production: true });
-    assert.equal(store.db.pragma('user_version', { simple: true }), 12);
+    assert.equal(store.db.pragma('user_version', { simple: true }), SCHEMA_VERSION);
     assert.equal(store.getPerson('p1').isTest, false);
     assert.deepEqual(store.listTestPeople(), []);
     assert.deepEqual(store.mintTestSessions(), [], 'no tokens for a real person');

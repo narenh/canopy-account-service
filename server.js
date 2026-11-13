@@ -407,6 +407,7 @@ function personView(req, p) {
 // who isn't the visitor -- ever gets about a person: /api/people and the
 // lookup. Never their email, phone, Instagram, Venmo or Cash App. Knowing
 // a number finds the account; the account never gives up its numbers.
+// The one exception is paymentHandles below, on /api/people only.
 function publicPersonView(req, p) {
   return { id: p.id, firstName: p.firstName, lastName: p.lastName, shortName: p.shortName, photoUrl: photoUrlFor(req, p) };
 }
@@ -1817,8 +1818,8 @@ function cleanCalendarUrl(raw) {
   return u.href.replace(/\/+$/, '');
 }
 
-// A site's switches: { allowsUnverified, allowsLookup, contactFields,
-// calendarUrl }. contactFields is the whole list of the visitor's own
+// A site's switches: { allowsUnverified, allowsLookup,
+// allowsPaymentHandles, contactFields, calendarUrl }. contactFields is the whole list of the visitor's own
 // contact details /api/session tells it, from db.CONTACT_FIELDS. Giving a
 // site a calendar URL for the first time also makes its calendar secret,
 // which comes back once as `calendarSecret`.
@@ -1834,6 +1835,7 @@ app.patch('/api/admin/apps/:id', (req, res) => {
   }
   if (body.allowsUnverified !== undefined) settings.allowsUnverified = !!body.allowsUnverified;
   if (body.allowsLookup !== undefined) settings.allowsLookup = !!body.allowsLookup;
+  if (body.allowsPaymentHandles !== undefined) settings.allowsPaymentHandles = !!body.allowsPaymentHandles;
   if (body.contactFields !== undefined) {
     const fields = body.contactFields;
     if (!Array.isArray(fields) || !fields.every((f) => db.CONTACT_FIELDS.includes(f))) {
@@ -1948,12 +1950,28 @@ app.get('/api/session', requireSite, (req, res) => {
 
 // Names and photos for other people: ?ids=a,b,c (up to 200). Anyone not
 // in the answer has been deleted -- a former member.
+//
+// A site the admin has let see payment handles (allowsPaymentHandles)
+// also gets each person's Venmo and Cash App, so a host can ask a friend
+// for money at the handle they use now, not the one they had the last
+// time they visited. Only those of the two it's been granted for the
+// visitor (contactFields): the switch never hands over a field the site
+// couldn't already be told about someone. Never email, phone or
+// Instagram. Like /api/session, a granted field is null when they
+// haven't filled it in.
 const ID_RE = /^[0-9a-f-]{36}$/;
+const PAYMENT_FIELDS = ['venmo', 'cashapp'];
+function paymentHandles(req, p) {
+  if (!req.site.allowsPaymentHandles) return {};
+  const out = {};
+  PAYMENT_FIELDS.forEach((f) => { if (req.site.contactFields.includes(f)) out[f] = p[f] || null; });
+  return out;
+}
 app.get('/api/people', requireSite, (req, res) => {
   res.set('Cache-Control', 'no-store');
   const ids = Array.from(new Set(String(req.query.ids || '').split(',').map((s) => s.trim()).filter((s) => ID_RE.test(s))));
   if (ids.length > 200) return res.status(400).json({ error: 'at most 200 ids at a time' });
-  res.json({ people: store.peopleByIds(ids).map((p) => publicPersonView(req, p)) });
+  res.json({ people: store.peopleByIds(ids).map((p) => ({ ...publicPersonView(req, p), ...paymentHandles(req, p) })) });
 });
 
 // ---------------- Finding someone by phone or Instagram ----------------

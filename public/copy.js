@@ -225,6 +225,7 @@ const COPY = {
     ownEmail: 'Change your own email from your profile.',
     allowsUnverified: 'Allows quick (unverified) accounts',
     allowsLookup: 'Can find people by phone number or Instagram',
+    allowsPaymentHandles: 'Can see everyone’s Venmo and Cash App (whichever is ticked below)',
     // Which of the visitor's own details /api/session tells the site.
     contactFields: 'Tell it the visitor’s own:',
     field_email: 'Email',
